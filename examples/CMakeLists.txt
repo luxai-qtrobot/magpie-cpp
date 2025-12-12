@@ -20,6 +20,17 @@ target_link_libraries(example_base_node PRIVATE magpie::core)
 add_executable(example_server_node server_node.cpp)
 target_link_libraries(example_server_node PRIVATE magpie::core)
 
+if(MAGPIE_WITH_AUDIO)
+    add_executable(example_audio_flac audio_flac.cpp)
+    target_link_libraries(example_audio_flac PRIVATE magpie::core)
+endif()
+
+if(MAGPIE_WITH_VIDEO)
+    add_executable(example_image_jpeg image_jpeg.cpp)
+    target_link_libraries(example_image_jpeg PRIVATE magpie::core)
+endif()
+
+
 # add_executable(example_zmq_rpc_responder zmq_rpc_responder.cpp)
 # target_link_libraries(example_zmq_rpc_responder PRIVATE magpie::core)
 # if(MAGPIE_WITH_ZMQ)

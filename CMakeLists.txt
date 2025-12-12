@@ -5,6 +5,7 @@ project(magpie
 )
 
 option(MAGPIE_WITH_AUDIO      "Build audio-related components" OFF)
+option(MAGPIE_WITH_VIDEO      "Build video-related components" OFF)
 option(MAGPIE_WITH_DISCOVERY  "Build discovery components"     OFF)
 option(MAGPIE_BUILD_TESTS     "Build unit tests"               OFF)
 option(MAGPIE_BUILD_EXAMPLES  "Build examples"                 ON)
@@ -27,6 +28,8 @@ add_library(magpie_core
     src/utils/common.cpp
     src/frames/frame.cpp
     src/frames/primitive_frames.cpp
+    src/frames/audio_frame.cpp
+    src/frames/image_frame.cpp
     src/serializer/value.cpp
     src/serializer/msgpack_serializer.cpp
     src/transport/stream_writer.cpp
@@ -72,12 +75,23 @@ if(MAGPIE_WITH_DISCOVERY)
     )
 endif()
 
-# Optional: audio (placeholder)
+
 if(MAGPIE_WITH_AUDIO)
-    add_library(magpie_audio INTERFACE)
-    add_library(magpie::audio ALIAS magpie_audio)
-    target_link_libraries(magpie_audio INTERFACE magpie_core)
+#   find_package(FLAC REQUIRED)   # or pkg-config if you prefer
+  target_compile_definitions(magpie_core PUBLIC MAGPIE_WITH_AUDIO)
+  target_link_libraries(magpie_core PRIVATE FLAC)
+  target_sources(magpie_core PRIVATE src/frames/audio_frame_flac.cpp)
 endif()
+
+
+if(MAGPIE_WITH_VIDEO)
+#   find_package(FLAC REQUIRED)   # or pkg-config if you prefer
+  target_compile_definitions(magpie_core PUBLIC MAGPIE_WITH_VIDEO)
+  find_library(TURBOJPEG_LIBRARY turbojpeg REQUIRED)
+  target_link_libraries(magpie_core PRIVATE ${TURBOJPEG_LIBRARY})
+  target_sources(magpie_core PRIVATE src/frames/image_frame_jpeg.cpp)
+endif()
+
 
 # Examples
 if(MAGPIE_BUILD_EXAMPLES)
