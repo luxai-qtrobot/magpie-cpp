@@ -47,6 +47,8 @@ public:
      * Safe to call multiple times.
      */
     void close();
+    
+    const std::string& name() const noexcept { return name_; }
 
 protected:
     // Blocking transport read; must be implemented by subclasses.
@@ -56,9 +58,7 @@ protected:
 
     // Transport-specific close.
     virtual void transportClose() = 0;
-
-    const std::string& name() const noexcept { return name_; }
-
+    
 private:
     void threadLoop();
 

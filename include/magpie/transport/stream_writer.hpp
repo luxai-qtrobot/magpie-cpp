@@ -43,6 +43,8 @@ public:
      */
     void close();
 
+    const std::string& name() const noexcept { return name_; }
+
 protected:
     // Transport-specific write.
     virtual void transportWrite(const Frame& frame,
@@ -50,8 +52,7 @@ protected:
 
     // Transport-specific close.
     virtual void transportClose() = 0;
-
-    const std::string& name() const noexcept { return name_; }
+    
 
 private:
     void threadLoop();

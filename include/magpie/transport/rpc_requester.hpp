@@ -48,6 +48,7 @@ public:
     void close();
 
     bool isClosed() const noexcept { return closed_; }
+    
     const std::string& name() const noexcept { return name_; }
 
 protected:

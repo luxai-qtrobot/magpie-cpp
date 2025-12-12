@@ -133,6 +133,9 @@ public:
         return dictValue_;
     }
 
+    
+    std::string toDebugString(int indent = 0) const;
+
 private:
     Type type_;
 

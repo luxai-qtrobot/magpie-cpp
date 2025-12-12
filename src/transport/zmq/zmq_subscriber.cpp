@@ -191,7 +191,7 @@ bool ZmqSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
             zmq_msg_close(&topicMsg);
 
             // Deserialize payload -> Value                                  
-            const auto* dataPtr = reinterpret_cast<const std::uint8_t*>(zmq_msg_data(&payloadMsg));                                  
+            const auto* dataPtr = static_cast<const std::uint8_t*>(zmq_msg_data(&payloadMsg));                                  
             const auto  size    = static_cast<std::size_t>(zmq_msg_size(&payloadMsg));
             
             Value value;

@@ -27,6 +27,7 @@ add_library(magpie_core
     src/utils/common.cpp
     src/frames/frame.cpp
     src/frames/primitive_frames.cpp
+    src/serializer/value.cpp
     src/serializer/msgpack_serializer.cpp
     src/transport/stream_writer.cpp
     src/transport/stream_reader.cpp
@@ -34,6 +35,8 @@ add_library(magpie_core
     src/transport/rpc_responder.cpp
     src/transport/zmq/zmq_publisher.cpp
     src/transport/zmq/zmq_subscriber.cpp
+    src/transport/zmq/zmq_rpc_requester.cpp
+    src/transport/zmq/zmq_rpc_responder.cpp
 )
 add_library(magpie::core ALIAS magpie_core)
 
