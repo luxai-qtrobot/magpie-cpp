@@ -190,23 +190,34 @@ bool ZmqSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
                             zmq_msg_size(&topicMsg));
             zmq_msg_close(&topicMsg);
 
-            // Deserialize payload
-            const auto* dataPtr = static_cast<const std::uint8_t*>(zmq_msg_data(&payloadMsg));
+            // Deserialize payload -> Value                                  
+            const auto* dataPtr = reinterpret_cast<const std::uint8_t*>(zmq_msg_data(&payloadMsg));                                  
             const auto  size    = static_cast<std::size_t>(zmq_msg_size(&payloadMsg));
-
-            std::unique_ptr<Frame> frame;
+            
+            Value value;
             if (serializer_) {
-                frame = serializer_->deserialize(dataPtr, size);
+                value = serializer_->deserialize(dataPtr, size);
+            } else {
+                Logger::warning(name() + ": no serializer set; cannot decode frame");
+                zmq_msg_close(&payloadMsg);
+                return false;
             }
 
             zmq_msg_close(&payloadMsg);
 
-            if (!frame) {
-                Logger::warning(name() + ": deserializer returned null Frame");
-                continue;
+            // Value must be a dict to construct a Frame
+            if (value.type() != Value::Type::Dict) {
+                Logger::warning(name() + ": deserialized value is not a dict");
+                return false;
             }
 
-            outFrame = std::move(frame);
+            auto framePtr = Frame::fromDict(value.asDict());
+            if (!framePtr) {
+                Logger::warning(name() + ": Frame::fromDict returned null");
+                return false;
+            }
+
+            outFrame = std::move(framePtr);
             return true;
         }
     }

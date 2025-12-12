@@ -6,24 +6,24 @@
 #include <string>
 #include <vector>
 
+#include <magpie/serializer/value.hpp>
+
 namespace magpie {
 
-class Frame;
 
 /**
- * Generic frame serializer interface.
- * Frame -> bytes, bytes -> Frame.
+ * Generic value serializer interface.
+ * Value -> bytes, bytes -> Value.
  */
 class Serializer {
 public:
     virtual ~Serializer() = default;
 
-    // Serialize a Frame to a fresh byte buffer.
-    virtual std::vector<std::uint8_t> serialize(const Frame& frame) = 0;
+    // Serialize a Value to a fresh byte buffer.
+    virtual std::vector<std::uint8_t> serialize(const Value& value) = 0;
 
-    // Deserialize bytes into a new Frame instance.
-    virtual std::unique_ptr<Frame> deserialize(const std::uint8_t* data,
-                                               std::size_t size) = 0;
+    // Deserialize bytes into a Value instance.
+    virtual Value deserialize(const std::uint8_t* data, std::size_t size) = 0;
 };
 
 } // namespace magpie

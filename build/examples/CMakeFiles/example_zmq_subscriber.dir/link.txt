@@ -1,1 +1,0 @@
-/usr/bin/c++     CMakeFiles/example_zmq_subscriber.dir/zmq_subscriber.cpp.o  -o example_zmq_subscriber  ../libmagpie_core.a -lpthread -lzmq /usr/lib/x86_64-linux-gnu/libmsgpackc.so.2.0.0 

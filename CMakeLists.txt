@@ -17,7 +17,9 @@ include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 find_package(msgpack REQUIRED)  # depending on your FindMsgpack or pkg-config setup
-# find_package(ZeroMQ REQUIRED)
+# find_package(PkgConfig REQUIRED)
+# pkg_check_modules(ZMQ REQUIRED libzmq)
+
 
 # Core library
 add_library(magpie_core
@@ -28,6 +30,8 @@ add_library(magpie_core
     src/serializer/msgpack_serializer.cpp
     src/transport/stream_writer.cpp
     src/transport/stream_reader.cpp
+    src/transport/rpc_requester.cpp
+    src/transport/rpc_responder.cpp
     src/transport/zmq/zmq_publisher.cpp
     src/transport/zmq/zmq_subscriber.cpp
 )

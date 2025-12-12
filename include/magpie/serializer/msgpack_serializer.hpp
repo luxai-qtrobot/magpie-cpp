@@ -24,9 +24,12 @@ public:
     MsgpackSerializer() = default;
     ~MsgpackSerializer() override = default;
 
-    std::vector<std::uint8_t> serialize(const Frame& frame) override;
-    std::unique_ptr<Frame> deserialize(const std::uint8_t* data,
-                                       std::size_t size) override;
+    // Serialize a Value to a fresh byte buffer.
+    virtual std::vector<std::uint8_t> serialize(const Value& value) override;
+
+    // Deserialize bytes into a Value instance.
+    virtual Value deserialize(const std::uint8_t* data, std::size_t size) override;
+
 
 private:
     static void packValue(const Value& v, msgpack::packer<msgpack::sbuffer>& pk);

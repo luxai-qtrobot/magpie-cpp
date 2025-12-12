@@ -3,6 +3,9 @@
 #include <magpie/serializer/msgpack_serializer.hpp>
 #include <magpie/utils/logger.hpp>
 
+#include <magpie/frames/frame.hpp>
+#include <magpie/serializer/value.hpp>
+
 #include <zmq.h>
 #include <cstring>
 
@@ -97,8 +100,14 @@ void ZmqPublisher::transportWrite(const Frame& frame,
 
     try {
         const std::string actualTopic = topic.empty() ? std::string() : topic;
-        const auto        payload     = serializer_ ? serializer_->serialize(frame)
-                                                    : std::vector<std::uint8_t>{};
+        // Frame -> Dict -> Value -> bytes
+        std::vector<std::uint8_t> payload;
+        if (serializer_) {
+            Frame::Dict dict;
+            frame.toDict(dict);
+            Value value = Value::fromDict(dict);
+            payload = serializer_->serialize(value);
+        }
 
         // Topic part
         zmq_msg_t topicMsg;

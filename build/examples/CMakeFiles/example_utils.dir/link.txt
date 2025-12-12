@@ -1,1 +1,0 @@
-/usr/bin/c++     CMakeFiles/example_utils.dir/utils.cpp.o  -o example_utils  ../libmagpie_core.a -lpthread -lzmq /usr/lib/x86_64-linux-gnu/libmsgpackc.so.2.0.0 
