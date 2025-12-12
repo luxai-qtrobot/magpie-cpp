@@ -49,7 +49,17 @@ public:
     void close();
 
     bool isClosed() const noexcept { return closed_; }
+    
     const std::string& name() const noexcept { return name_; }
+
+    void send(const Object& response, const ClientContext& clientCtx) {
+        transportSend(response, clientCtx);
+    }
+
+    void receive(Object& outRequest, ClientContext& outClientCtx, double timeoutSec)  {
+        transportRecv(outRequest, outClientCtx, timeoutSec);
+    }
+
 
 protected:
     /**
