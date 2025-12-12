@@ -3,7 +3,7 @@
 
 TEST_CASE(Logger_basic, "[logger]") {
     magpie::Logger::info("test info");
-    magpie::Logger::warn("test warn");
+    magpie::Logger::warning("test warn");
     magpie::Logger::error("test error");
     REQUIRE(true);
 }

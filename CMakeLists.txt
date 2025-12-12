@@ -62,18 +62,26 @@ target_compile_features(magpie_core PUBLIC cxx_std_14)
 
 
 # Optional: discovery (skeleton)
+# if(MAGPIE_WITH_DISCOVERY)
+#     add_library(magpie_discovery
+#         src/discovery/mcast_discovery.cpp
+#     )
+#     add_library(magpie::discovery ALIAS magpie_discovery)
+#     target_link_libraries(magpie_discovery PUBLIC magpie_core)
+#     target_include_directories(magpie_discovery
+#         PUBLIC
+#             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#             $<INSTALL_INTERFACE:include>
+#     )
+# endif()
+
 if(MAGPIE_WITH_DISCOVERY)
-    add_library(magpie_discovery
-        src/discovery/mcast_discovery.cpp
-    )
-    add_library(magpie::discovery ALIAS magpie_discovery)
-    target_link_libraries(magpie_discovery PUBLIC magpie_core)
-    target_include_directories(magpie_discovery
-        PUBLIC
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-            $<INSTALL_INTERFACE:include>
-    )
+  target_compile_definitions(magpie_core PUBLIC MAGPIE_WITH_DISCOVERY)
+#   target_include_directories(magpie_core PRIVATE ${AVAHI_INCLUDE_DIRS})
+  target_link_libraries(magpie_core PRIVATE avahi-client avahi-common)
+  target_sources(magpie_core PRIVATE src/discovery/zconf_discovery.cpp)
 endif()
+
 
 
 if(MAGPIE_WITH_AUDIO)
@@ -115,14 +123,14 @@ install(TARGETS
 )
 
 
-if(MAGPIE_WITH_DISCOVERY)
-    install(TARGETS magpie_discovery
-        EXPORT MagpieTargets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    )
-endif()
+# if(MAGPIE_WITH_DISCOVERY)
+#     install(TARGETS magpie_discovery
+#         EXPORT MagpieTargets
+#         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+#         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+#         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+#     )
+# endif()
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 

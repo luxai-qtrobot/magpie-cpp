@@ -30,6 +30,12 @@ if(MAGPIE_WITH_VIDEO)
     target_link_libraries(example_image_jpeg PRIVATE magpie::core)
 endif()
 
+if(MAGPIE_WITH_DISCOVERY)
+    add_executable(example_zconf_discovery zconf_discovery.cpp)
+    target_link_libraries(example_zconf_discovery PRIVATE magpie::core)
+
+endif()
+
 
 # add_executable(example_zmq_rpc_responder zmq_rpc_responder.cpp)
 # target_link_libraries(example_zmq_rpc_responder PRIVATE magpie::core)
