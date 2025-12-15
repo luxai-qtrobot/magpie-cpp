@@ -43,8 +43,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DMAGPIE_BUILD_TESTS=ON \
-            -DRobotTestingFramework_DIR=${{ github.workspace }}/rtf_install/lib/cmake/RobotTestingFramework
-            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/rtf_install
+            -DRobotTestingFramework_DIR=${{ github.workspace }}/rtf_install/lib/cmake/RobotTestingFramework            
 
       - name: Build (magpie)
         run: cmake --build build
