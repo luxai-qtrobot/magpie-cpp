@@ -21,18 +21,14 @@ int main() {
 
     while (true) {
         try {
-            bool handled = server.handleOnce(onRequest, /*timeoutSec=*/1.0);
-            (void)handled; // same as Python: ignore return value
-        }
-        catch (const TimeoutError&) {
-            Logger::warning("zmq_responder example timeout on responding...");
+            bool ok = server.handleOnce(onRequest, /*timeoutSec=*/3.0);   
+            if (!ok) {
+                Logger::info("responder: no request received.");
+                continue;
+            }
         }
         catch (const std::exception& e) {
             Logger::error(std::string("responder error: ") + e.what());
-            break;
-        }
-        catch (...) {
-            Logger::error("responder unknown error");
             break;
         }
     }
