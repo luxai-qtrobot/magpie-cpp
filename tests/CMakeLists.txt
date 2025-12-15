@@ -6,7 +6,7 @@ find_package(RobotTestingFramework REQUIRED COMPONENTS DLL)
 # enable_testing()
 
 # Put all plugins in: <build>/rtf_tests/<config>
-set(RTF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/rtf_tests/$<CONFIG>")
+set(RTF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/rtf_tests")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/rtf_tests")
 
 # Collect plugin targets so we can make the runner depend on them
