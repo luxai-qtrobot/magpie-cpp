@@ -60,6 +60,7 @@ add_rtf_plugin(TestFrame test_frame.cpp)
 set(RTF_JUNIT_XML "${CMAKE_BINARY_DIR}/result.xml")
 
 
+list(APPEND CMAKE_PROGRAM_PATH "${CMAKE_PREFIX_PATH}/bin")
 find_program(RTF_TESTRUNNER robottestingframework-testrunner REQUIRED)
 
 add_test(

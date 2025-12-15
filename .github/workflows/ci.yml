@@ -34,12 +34,17 @@ jobs:
           cmake --build robot-testing-framework/build
           cmake --install robot-testing-framework/build
 
+      - name: Add RTF to PATH
+        run: |
+          echo "${{ github.workspace }}/rtf_install/bin" >> $GITHUB_PATH
+                    
       - name: Configure (magpie)
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DMAGPIE_BUILD_TESTS=ON \
             -DRobotTestingFramework_DIR=${{ github.workspace }}/rtf_install/lib/cmake/RobotTestingFramework
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/rtf_install
 
       - name: Build (magpie)
         run: cmake --build build
