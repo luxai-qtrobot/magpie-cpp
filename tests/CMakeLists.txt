@@ -2,20 +2,36 @@ cmake_minimum_required(VERSION 3.16)
 
 find_package(RobotTestingFramework REQUIRED COMPONENTS DLL)
 
-# Put all plugins in: <build>/rtf_tests/<config> (config folder appears on multi-config generators)
-set(RTF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/rtf_tests/$<CONFIG>")
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/rtf_tests") # base folder
+include(CTest)
+enable_testing()
 
-# Helper to add one RTF plugin (one test per shared library)
+# Put all plugins in: <build>/rtf_tests/<config>
+set(RTF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/rtf_tests/$<CONFIG>")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/rtf_tests")
+
+# Collect plugin targets so we can make the runner depend on them
+set(RTF_PLUGIN_TARGETS "")
+
 function(add_rtf_plugin target)
   add_library(${target} MODULE ${ARGN})
 
+  # 1) Link to your project lib (brings include dirs + symbols)
+  target_link_libraries(${target} PRIVATE magpie::core)
+
+  # 2) Link to RobotTestingFramework
   target_link_libraries(${target} PRIVATE
     RobotTestingFramework::RTF
     RobotTestingFramework::RTF_dll
   )
 
-  # RTF plugins are typically loaded by filename; avoid "lib" prefix on Unix.
+  # 3) Make sure your in-repo test macro header is findable
+  # If you include it as: #include "external/rtf/macros.hpp"
+  # then the include path must contain the repo root.
+  target_include_directories(${target} PRIVATE
+    ${CMAKE_SOURCE_DIR}
+  )
+
+  # 4) RTF plugins: avoid "lib" prefix and place outputs in rtf_tests/
   set_target_properties(${target} PROPERTIES
     PREFIX ""
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/rtf_tests"
@@ -29,21 +45,17 @@ function(add_rtf_plugin target)
     RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/rtf_tests/RelWithDebInfo"
     RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/rtf_tests/MinSizeRel"
   )
+
+  # 5) Remember this target for the global runner dependency
+  set(RTF_PLUGIN_TARGETS ${RTF_PLUGIN_TARGETS} ${target} PARENT_SCOPE)
 endfunction()
 
-# ---- Add your plugins here (one .cpp per plugin/test) ----
-# Example:
+# ---- Add your plugins here (only one line per test) ----
 add_rtf_plugin(TestDummy test_dummy.cpp)
-# add_rtf_plugin(TestLogger TestLogger.cpp)
-# add_rtf_plugin(TestFoo    TestFoo.cpp)
+add_rtf_plugin(TestValue test_value.cpp)
+# add_rtf_plugin(TestLogger test_logger.cpp)
 
-
-
-# ---- One testrunner invocation for all plugins ----
-include(CTest)
-enable_testing()
-
-# Where to write junit xml
+# ---- One testrunner invocation for all plugins (JUnit output) ----
 set(RTF_JUNIT_XML "${CMAKE_BINARY_DIR}/result.xml")
 
 add_test(
@@ -56,7 +68,9 @@ add_test(
           --output-type junit
 )
 
-# Make sure plugins are built before running the test
-set_tests_properties(rtf_all_plugins PROPERTIES
-  DEPENDS "TestDummy;MyTest"
-)
+# Ensure plugins are built before running the test
+if(RTF_PLUGIN_TARGETS)
+  set_tests_properties(rtf_all_plugins PROPERTIES
+    DEPENDS "${RTF_PLUGIN_TARGETS}"
+  )
+endif()

@@ -108,8 +108,6 @@ endif()
 
 # Tests
 if(MAGPIE_BUILD_TESTS)
-    include(CTest)
-    enable_testing()
     add_subdirectory(tests)
 endif()
 
