@@ -1,5 +1,7 @@
-#include "external/catch2/catch.hpp"
+#include "external/rtf/macros.hpp"
 
-TEST_CASE(Dummy, "[dummy]") {
-    REQUIRE(1 + 1 == 2);
+RTF_TEST_CASE("TestDummy") {
+    ROBOTTESTINGFRAMEWORK_TEST_REPORT("testing integers");
+    ROBOTTESTINGFRAMEWORK_TEST_CHECK(2 < 3, "is not smaller");
 }
+
