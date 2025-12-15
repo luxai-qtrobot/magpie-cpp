@@ -59,9 +59,12 @@ add_rtf_plugin(TestFrame test_frame.cpp)
 # ---- One testrunner invocation for all plugins (JUnit output) ----
 set(RTF_JUNIT_XML "${CMAKE_BINARY_DIR}/result.xml")
 
+
+find_program(RTF_TESTRUNNER robottestingframework-testrunner REQUIRED)
+
 add_test(
   NAME rtf_all_plugins
-  COMMAND robottestingframework-testrunner
+  COMMAND ${RTF_TESTRUNNER}
           -v
           --tests "${RTF_PLUGIN_DIR}"
           --recursive
