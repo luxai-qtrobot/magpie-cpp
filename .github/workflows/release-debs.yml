@@ -18,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         distro:
-          - name: ubuntu20.04
-            runner: ubuntu-20.04
+          - name: ubuntu-22.04
+            runner: ubuntu-22.04
           - name: ubuntu24.04
             runner: ubuntu-24.04
 
