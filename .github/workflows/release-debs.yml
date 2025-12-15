@@ -33,8 +33,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config g++ \
             libzmq3-dev libmsgpack-dev \
-            libflac-dev \            
-            libturbojpeg-dev \ 
+            libflac-dev \
+            libturbojpeg0-dev \
             libavahi-client-dev \
             dpkg-dev fakeroot
 
