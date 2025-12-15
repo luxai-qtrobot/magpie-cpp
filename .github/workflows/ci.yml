@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      checks: write   # needed for dorny/test-reporter
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4  # latest major line :contentReference[oaicite:0]{index=0}
+
+      - name: Install system deps (ZeroMQ, msgpack, toolchain)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config \
+            g++ \
+            libzmq3-dev \
+            libmsgpack-dev
+
+      - name: Build & install RobotTestingFramework
+        run: |
+          git clone --depth 1 https://github.com/robotology/robot-testing-framework.git
+          cmake -S robot-testing-framework -B robot-testing-framework/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/rtf_install
+          cmake --build robot-testing-framework/build
+          cmake --install robot-testing-framework/build
+
+      - name: Configure (magpie)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMAGPIE_BUILD_TESTS=ON \
+            -DRobotTestingFramework_DIR=${{ github.workspace }}/rtf_install/lib/cmake/RobotTestingFramework
+
+      - name: Build (magpie)
+        run: cmake --build build
+
+      - name: Run tests (CTest -> RTF runner -> JUnit)
+        run: |
+          ctest --test-dir build -V
+
+      # Always upload the JUnit xml (even on failures)
+      - name: Upload JUnit XML
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4  # artifact action docs :contentReference[oaicite:1]{index=1}
+        with:
+          name: rtf-junit
+          path: build/result.xml
+          if-no-files-found: warn
+
+      # Always publish test results in GitHub UI
+      - name: Publish test report
+        if: ${{ always() }}
+        uses: dorny/test-reporter@v2  # JUnit support :contentReference[oaicite:2]{index=2}
+        with:
+          name: RobotTestingFramework
+          path: build/result.xml
+          reporter: java-junit
+          fail-on-error: false

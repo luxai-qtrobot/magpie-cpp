@@ -21,6 +21,8 @@ find_package(msgpack REQUIRED)  # depending on your FindMsgpack or pkg-config se
 # find_package(PkgConfig REQUIRED)
 # pkg_check_modules(ZMQ REQUIRED libzmq)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 
 # Core library
 add_library(magpie_core

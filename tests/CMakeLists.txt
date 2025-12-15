@@ -53,7 +53,8 @@ endfunction()
 # ---- Add your plugins here (only one line per test) ----
 add_rtf_plugin(TestDummy test_dummy.cpp)
 add_rtf_plugin(TestValue test_value.cpp)
-# add_rtf_plugin(TestLogger test_logger.cpp)
+add_rtf_plugin(TestMsgpackSerializer test_msgpack_serializer.cpp)
+add_rtf_plugin(TestFrame test_frame.cpp)
 
 # ---- One testrunner invocation for all plugins (JUnit output) ----
 set(RTF_JUNIT_XML "${CMAKE_BINARY_DIR}/result.xml")
