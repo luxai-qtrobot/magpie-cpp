@@ -108,8 +108,10 @@ if(MAGPIE_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-# Tests
 if(MAGPIE_BUILD_TESTS)
+    set(BUILD_TESTING ON CACHE BOOL "Build tests" FORCE)
+    include(CTest)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
@@ -122,15 +124,6 @@ install(TARGETS
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-
-# if(MAGPIE_WITH_DISCOVERY)
-#     install(TARGETS magpie_discovery
-#         EXPORT MagpieTargets
-#         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-#         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-#         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-#     )
-# endif()
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 

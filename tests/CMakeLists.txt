@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 find_package(RobotTestingFramework REQUIRED COMPONENTS DLL)
 
-include(CTest)
-enable_testing()
+# include(CTest)
+# enable_testing()
 
 # Put all plugins in: <build>/rtf_tests/<config>
 set(RTF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/rtf_tests/$<CONFIG>")
@@ -68,10 +68,3 @@ add_test(
           --output "${RTF_JUNIT_XML}"
           --output-type junit
 )
-
-# Ensure plugins are built before running the test
-if(RTF_PLUGIN_TARGETS)
-  set_tests_properties(rtf_all_plugins PROPERTIES
-    DEPENDS "${RTF_PLUGIN_TARGETS}"
-  )
-endif()
