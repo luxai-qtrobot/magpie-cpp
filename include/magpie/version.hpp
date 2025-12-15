@@ -1,5 +1,0 @@
-#pragma once
-
-#define MAGPIE_VERSION_MAJOR 0
-#define MAGPIE_VERSION_MINOR 1
-#define MAGPIE_VERSION_PATCH 0
