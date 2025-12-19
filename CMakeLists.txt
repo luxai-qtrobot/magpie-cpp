@@ -75,14 +75,15 @@ set_target_properties(magpie_core PROPERTIES
 if(MAGPIE_WITH_DISCOVERY)
     add_library(magpie_discovery SHARED
         src/discovery/zconf_discovery.cpp
+        # src/third_party/mdns/mdns.c
     )
     add_library(magpie::discovery ALIAS magpie_discovery)
 
     target_link_libraries(magpie_discovery
         PUBLIC
             magpie_core
-        PRIVATE
-            avahi-client avahi-common
+        # PRIVATE
+        #     avahi-client avahi-common
     )
 
     target_compile_definitions(magpie_discovery PUBLIC MAGPIE_WITH_DISCOVERY)

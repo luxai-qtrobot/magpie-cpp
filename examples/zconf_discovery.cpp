@@ -12,7 +12,7 @@ using namespace magpie;
 static void advertiseNode() {
     const std::string nodeId = getUniqueId();
     const std::uint16_t port = 5555;
-    const std::string payload = R"({"hello":"world"})";
+    const std::string payload = R"({"hello":"from cpp world"})";
 
     Logger::info("Advertising node_id=" + nodeId +
                  " on port=" + std::to_string(port) + " ...");
@@ -22,8 +22,7 @@ static void advertiseNode() {
 
     disc.advertise(
         nodeId,
-        port,
-        "zmq",
+        port,        
         payload
     );
 
@@ -49,7 +48,7 @@ static void scanNodes() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
 
-            auto nodes = disc.listNodes();
+            auto nodes = disc.list_nodes();
             if (nodes.empty()) {
                 Logger::debug("No nodes discovered...");
                 continue;
@@ -57,13 +56,13 @@ static void scanNodes() {
 
             Logger::info("Discovered nodes:");
             for (const auto& info : nodes) {
-                const std::string bestIp = ZconfDiscovery::pickBestIp(info.ips);
+                const std::string bestIp = ZconfDiscovery::pick_best_ip(info);
 
                 Logger::info(
-                    "  node_id=" + info.nodeId +
+                    "  node_id=" + info.node_id +
                     "  ips=" + (info.ips.empty() ? "[]" : info.ips.front()) +
                     "  port=" + std::to_string(info.port) +
-                    "  payload=" + info.payload +
+                    "  payload=" + info.payload_json +
                     "  (best: " + bestIp + ")"
                 );
             }
