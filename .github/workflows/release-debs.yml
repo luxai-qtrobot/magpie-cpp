@@ -35,7 +35,7 @@ jobs:
             libzmq3-dev libmsgpack-dev \
             libflac-dev \
             libturbojpeg0-dev \
-            libavahi-client-dev \
+            libfmt-dev \
             dpkg-dev fakeroot
 
       - name: Configure (Release, enable features)
@@ -43,8 +43,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DMAGPIE_WITH_AUDIO=ON \
-            -DMAGPIE_WITH_VIDEO=ON \
-            -DMAGPIE_WITH_DISCOVERY=ON \
+            -DMAGPIE_WITH_VIDEO=ON \            
             -DMAGPIE_BUILD_TESTS=OFF \
             -DMAGPIE_BUILD_EXAMPLES=OFF
 

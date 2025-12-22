@@ -59,11 +59,11 @@ MAGPIE-CPP uses **CMake** and targets **C++14**.
 - CMake ≥ 3.10
 - ZeroMQ (libzmq3-dev)
 - Msgpack-C (libmsgpack-dev)
-- {fmt} (libfmt)
+- {fmt} (libfmt-dev)
 
 Optional dependencies:
 - **Audio**: Flac encoder (libflac-dev)
-- **Video**: Jpeg encoder (libturbojpeg-dev)
+- **Video**: Jpeg encoder (libturbojpeg0-dev/libturbojpeg-dev)
 
 ### CMake options
 
