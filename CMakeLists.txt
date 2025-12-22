@@ -54,8 +54,8 @@ target_include_directories(magpie_core
 target_link_libraries(magpie_core
     PUBLIC
         Threads::Threads
-    PRIVATE
-        fmt::fmt    
+        fmt::fmt
+    PRIVATE        
         zmq      # or ZeroMQ::ZeroMQ, depending on your system
         msgpackc # or msgpackc-cxx / msgpack depending on your distro
 )
