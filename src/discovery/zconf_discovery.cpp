@@ -677,29 +677,20 @@ struct ZconfDiscovery::Impl {
         const std::string instance(inst.str, inst.length);
 
         if (!ends_with_case_insensitive(owner_name, service_type_)) {
-          Logger::debug("ZconfDiscovery: IGNORE PTR (owner not service) owner='{}'", owner_name);
           return;
         }
         if (!ends_with_case_insensitive(instance, service_type_)) {
-          Logger::debug("ZconfDiscovery: IGNORE PTR (instance not service) instance='{}'", instance);
           return;
         }
 
         std::string node_id = node_id_from_instance(instance);
         if (node_id.empty()) {
-          Logger::debug("ZconfDiscovery: IGNORE PTR (empty node_id) instance='{}'", instance);
           return;
         }
-
-        Logger::debug(
-          "ZconfDiscovery: PTR owner='{}' instance='{}' -> node_id='{}'",
-          owner_name, instance, node_id
-        );
 
         std::lock_guard<std::mutex> lk(mtx_);
 
         if (ttl == 0) {
-          Logger::debug("ZconfDiscovery: PTR goodbye -> erase node_id='{}' instance='{}'", node_id, instance);
           nodes_.erase(node_id);
           instance_to_node_.erase(instance);
           expire_ms_by_node_.erase(node_id);
@@ -729,16 +720,10 @@ struct ZconfDiscovery::Impl {
 
         const std::string instance = ensure_trailing_dot(owner_name);
         if (!ends_with_case_insensitive(instance, service_type_)) {
-          Logger::debug("ZconfDiscovery: IGNORE SRV (instance not service) instance='{}'", instance);
           return;
         }
 
         const std::string host_str(srv.name.str, srv.name.length);
-
-        Logger::debug(
-          "ZconfDiscovery: SRV owner(instance)='{}' host='{}' port={}",
-          owner_name, host_str, (int)srv.port
-        );
 
         std::string node_id;
         {
@@ -747,13 +732,10 @@ struct ZconfDiscovery::Impl {
           node_id = (it != instance_to_node_.end()) ? it->second : node_id_from_instance(instance);
 
           if (node_id.empty()) {
-            Logger::debug("ZconfDiscovery: IGNORE SRV (empty node_id) instance='{}'", instance);
             return;
           }
 
           if (ttl == 0) {
-            Logger::debug("ZconfDiscovery: SRV goodbye -> erase node_id='{}' instance='{}' host='{}'",
-                          node_id, instance, host_str);
             nodes_.erase(node_id);
             instance_to_node_.erase(instance);
             expire_ms_by_node_.erase(node_id);
@@ -770,18 +752,9 @@ struct ZconfDiscovery::Impl {
           std::string host_norm = norm_host(ni.host_qualified);
           host_to_node_[host_norm] = node_id;
 
-          Logger::debug(
-            "ZconfDiscovery: SRV map host_norm='{}' -> node_id='{}' (node_id_from_instance='{}')",
-            host_norm, node_id, node_id_from_instance(instance)
-          );
-
           // Apply pending IPs already seen for that host
           auto pit = pending_ips_by_host_.find(host_norm);
           if (pit != pending_ips_by_host_.end()) {
-            Logger::debug(
-              "ZconfDiscovery: SRV apply pending IPs host_norm='{}' count={}",
-              host_norm, (int)pit->second.size()
-            );
             for (auto& ip : pit->second) {
               if (std::find(ni.ips.begin(), ni.ips.end(), ip) == ni.ips.end())
                 ni.ips.push_back(ip);
@@ -806,14 +779,8 @@ struct ZconfDiscovery::Impl {
 
         const std::string instance = ensure_trailing_dot(owner_name);
         if (!ends_with_case_insensitive(instance, service_type_)) {
-          Logger::debug("ZconfDiscovery: IGNORE TXT (instance not service) instance='{}'", instance);
           return;
         }
-
-        Logger::debug(
-          "ZconfDiscovery: TXT owner(instance)='{}' parsed_kv={}",
-          owner_name, (int)parsed
-        );
 
         // Start with canonical node id from instance (lowercase)
         std::string node_id = node_id_from_instance(instance);
@@ -826,32 +793,22 @@ struct ZconfDiscovery::Impl {
           std::string key(txt[i].key.str ? txt[i].key.str : "", txt[i].key.length);
           std::string val(txt[i].value.str ? txt[i].value.str : "", txt[i].value.length);
 
-          Logger::debug("ZconfDiscovery: TXT kv key='{}' val_len={}", key, (int)val.size());
+          // Logger::debug("ZconfDiscovery: TXT kv key='{}' val_len={}", key, (int)val.size());
 
           if (key == "node_id" && !val.empty()) txt_node_id_raw = val;
           if (key == "payload" && !val.empty()) payload = val;
         }
 
         if (!txt_node_id_raw.empty()) {
-          // IMPORTANT FIX: keep the same canonical node_id key used elsewhere (lowercase)
-          Logger::debug("ZconfDiscovery: TXT node_id raw='{}' -> canonical='{}'",
-                        txt_node_id_raw, to_lower(txt_node_id_raw));
           node_id = to_lower(txt_node_id_raw);
         }
 
         if (node_id.empty()) {
-          Logger::debug("ZconfDiscovery: IGNORE TXT (empty node_id) instance='{}'", instance);
           return;
         }
 
-        Logger::debug(
-          "ZconfDiscovery: TXT resolved instance='{}' -> node_id='{}' payload_len={}",
-          instance, node_id, (int)payload.size()
-        );
-
         std::lock_guard<std::mutex> lk(mtx_);
         if (ttl == 0) {
-          Logger::debug("ZconfDiscovery: TXT goodbye -> erase node_id='{}' instance='{}'", node_id, instance);
           nodes_.erase(node_id);
           instance_to_node_.erase(instance);
           expire_ms_by_node_.erase(node_id);
@@ -870,7 +827,7 @@ struct ZconfDiscovery::Impl {
       }
 
       if (rtype == MDNS_RECORDTYPE_A) {
-        Logger::debug("ZconfDiscovery: HIT A owner='{}'", owner_name);
+        // Logger::debug("ZconfDiscovery: HIT A owner='{}'", owner_name);
 
         // A: host_qualified -> IPv4
         sockaddr_in addr{};
@@ -884,10 +841,6 @@ struct ZconfDiscovery::Impl {
 
         auto itNode = host_to_node_.find(host_norm);
         if (itNode == host_to_node_.end()) {
-          Logger::debug(
-            "ZconfDiscovery: A host not mapped yet host_norm='{}' caching ip='{}' pending_hosts={}",
-            host_norm, ip, (int)pending_ips_by_host_.size()
-          );
           auto& v = pending_ips_by_host_[host_norm];
           if (std::find(v.begin(), v.end(), ip) == v.end()) v.push_back(ip);
           return;
@@ -899,20 +852,16 @@ struct ZconfDiscovery::Impl {
 
         auto& ips = it->second.ips;
         if (ttl == 0) {
-          Logger::debug("ZconfDiscovery: A goodbye node_id='{}' ip='{}'", node_id, ip);
           ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
         } else {
           if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
           expire_ms_by_node_[node_id] = expire_ms;
-          Logger::debug("ZconfDiscovery: A add node_id='{}' ip='{}' total_ips={}", node_id, ip, (int)ips.size());
         }
         cv_.notify_all();
         return;
       }
 
       if (rtype == MDNS_RECORDTYPE_AAAA) {
-        Logger::debug("ZconfDiscovery: HIT AAAA owner='{}'", owner_name);
-
         // AAAA: host_qualified -> IPv6
         sockaddr_in6 addr6{};
         mdns_record_parse_aaaa(data, size, record_offset, record_length, &addr6);
@@ -925,10 +874,6 @@ struct ZconfDiscovery::Impl {
 
         auto itNode = host_to_node_.find(host_norm);
         if (itNode == host_to_node_.end()) {
-          Logger::debug(
-            "ZconfDiscovery: AAAA host not mapped yet host_norm='{}' caching ip='{}' pending_hosts={}",
-            host_norm, ip, (int)pending_ips_by_host_.size()
-          );
           auto& v = pending_ips_by_host_[host_norm];
           if (std::find(v.begin(), v.end(), ip) == v.end()) v.push_back(ip);
           return;
@@ -939,22 +884,16 @@ struct ZconfDiscovery::Impl {
         if (it == nodes_.end()) return;
 
         auto& ips = it->second.ips;
-        if (ttl == 0) {
-          Logger::debug("ZconfDiscovery: AAAA goodbye node_id='{}' ip='{}'", node_id, ip);
+        if (ttl == 0) {          
           ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
         } else {
           if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
           expire_ms_by_node_[node_id] = expire_ms;
-          Logger::debug("ZconfDiscovery: AAAA add node_id='{}' ip='{}' total_ips={}", node_id, ip, (int)ips.size());
         }
         cv_.notify_all();
         return;
       }
 
-      Logger::debug(
-        "ZconfDiscovery: UNHANDLED rtype={} owner='{}' entry={}",
-        (int)rtype, owner_name, (int)entry
-      );
     }
 
 
