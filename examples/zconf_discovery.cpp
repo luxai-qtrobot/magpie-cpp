@@ -50,17 +50,23 @@ static void scanNodes() {
 
             auto nodes = disc.list_nodes();
             if (nodes.empty()) {
-                Logger::debug("No nodes discovered...");
+                Logger::info("No nodes discovered...");
                 continue;
             }
-
             Logger::info("Discovered nodes:");
             for (const auto& info : nodes) {
                 const std::string bestIp = ZconfDiscovery::pick_best_ip(info);
 
+                std::string ips_str = "[";
+                for (size_t i = 0; i < info.ips.size(); ++i) {
+                    ips_str += info.ips[i];
+                    if (i + 1 < info.ips.size()) ips_str += ", ";
+                }
+                ips_str += "]";
+
                 Logger::info(
                     "  node_id=" + info.node_id +
-                    "  ips=" + (info.ips.empty() ? "[]" : info.ips.front()) +
+                    "  ips=" + ips_str +
                     "  port=" + std::to_string(info.port) +
                     "  payload=" + info.payload_json +
                     "  (best: " + bestIp + ")"
@@ -76,7 +82,7 @@ static void scanNodes() {
 }
 
 int main(int argc, char** argv) {
-    Logger::setLevel("DEBUG");
+    // Logger::setLevel("DEBUG");
 
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " [advertise|scan]\n";

@@ -19,6 +19,10 @@ target_link_libraries(example_base_node PRIVATE magpie::core)
 add_executable(example_server_node server_node.cpp)
 target_link_libraries(example_server_node PRIVATE magpie::core)
 
+add_executable(example_zconf_discovery zconf_discovery.cpp)
+target_link_libraries(example_zconf_discovery PRIVATE magpie::core)
+
+
 if(MAGPIE_WITH_AUDIO)
     add_executable(example_audio_flac audio_flac.cpp)
     target_link_libraries(example_audio_flac PRIVATE magpie::core magpie::audio)
@@ -27,9 +31,4 @@ endif()
 if(MAGPIE_WITH_VIDEO)
     add_executable(example_image_jpeg image_jpeg.cpp)
     target_link_libraries(example_image_jpeg PRIVATE magpie::core magpie::video)
-endif()
-
-if(MAGPIE_WITH_DISCOVERY)
-    add_executable(example_zconf_discovery zconf_discovery.cpp)
-    target_link_libraries(example_zconf_discovery PRIVATE magpie::core magpie::discovery)
 endif()

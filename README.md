@@ -39,7 +39,7 @@ Originally built for **QTrobot** at LuxAI, MAGPIE-CPP is generic enough to be us
   - Audio frames: `AudioFrameRaw`, `AudioFrameFlac` (optional)
   - Image frames: `ImageFrameRaw`, `ImageFrameJpeg` (optional)
 
-- 🌐 **Zeroconf / mDNS discovery** (optional)
+- 🌐 **Zeroconf / mDNS discovery**
   - Avahi-based node discovery on Linux
   - Interoperable with Python MAGPIE Zeroconf discovery
 
@@ -57,20 +57,19 @@ MAGPIE-CPP uses **CMake** and targets **C++14**.
 
 - C++14 compatible compiler
 - CMake ≥ 3.10
-- ZeroMQ (libzmq)
-- Msgpack-C
+- ZeroMQ (libzmq3-dev)
+- Msgpack-C (libmsgpack-dev)
+- {fmt} (libfmt)
 
 Optional dependencies:
-- **Audio**: libFLAC
-- **Video**: libjpeg-turbo
-- **Discovery**: Avahi (libavahi-client, libavahi-common)
+- **Audio**: Flac encoder (libflac-dev)
+- **Video**: Jpeg encoder (libturbojpeg-dev)
 
 ### CMake options
 
 ```cmake
 option(MAGPIE_WITH_AUDIO      "Build audio-related components"      OFF)
 option(MAGPIE_WITH_VIDEO      "Build video-related components"      OFF)
-option(MAGPIE_WITH_DISCOVERY  "Build discovery components"          OFF)
 ```
 
 ### Build example
@@ -81,8 +80,7 @@ cd magpie-cpp
 
 cmake -S . -B build \
   -DMAGPIE_WITH_AUDIO=ON \
-  -DMAGPIE_WITH_VIDEO=ON \
-  -DMAGPIE_WITH_DISCOVERY=ON
+  -DMAGPIE_WITH_VIDEO=ON \  
 
 cmake --build build
 ```

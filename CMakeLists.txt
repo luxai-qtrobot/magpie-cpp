@@ -6,7 +6,6 @@ project(magpie
 
 option(MAGPIE_WITH_AUDIO      "Build audio-related components" OFF)
 option(MAGPIE_WITH_VIDEO      "Build video-related components" OFF)
-option(MAGPIE_WITH_DISCOVERY  "Build discovery components"     OFF)
 option(MAGPIE_BUILD_TESTS     "Build unit tests"               OFF)
 option(MAGPIE_BUILD_EXAMPLES  "Build examples"                 ON)
 
@@ -18,6 +17,7 @@ include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 find_package(msgpack REQUIRED)  # depending on your FindMsgpack or pkg-config setup
+find_package(fmt REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -41,6 +41,7 @@ add_library(magpie_core SHARED
     src/transport/zmq/zmq_subscriber.cpp
     src/transport/zmq/zmq_rpc_requester.cpp
     src/transport/zmq/zmq_rpc_responder.cpp
+    src/discovery/zconf_discovery.cpp
 )
 add_library(magpie::core ALIAS magpie_core)
 
@@ -54,6 +55,7 @@ target_link_libraries(magpie_core
     PUBLIC
         Threads::Threads
     PRIVATE
+        fmt::fmt    
         zmq      # or ZeroMQ::ZeroMQ, depending on your system
         msgpackc # or msgpackc-cxx / msgpack depending on your distro
 )
@@ -70,31 +72,6 @@ set_target_properties(magpie_core PROPERTIES
 # --------------------------------------------------------------------------------------
 # Optional feature libraries (built as separate shared libs)
 # --------------------------------------------------------------------------------------
-
-# Discovery
-if(MAGPIE_WITH_DISCOVERY)
-    add_library(magpie_discovery SHARED
-        src/discovery/zconf_discovery.cpp
-        # src/third_party/mdns/mdns.c
-    )
-    add_library(magpie::discovery ALIAS magpie_discovery)
-
-    target_link_libraries(magpie_discovery
-        PUBLIC
-            magpie_core
-        # PRIVATE
-        #     avahi-client avahi-common
-    )
-
-    target_compile_definitions(magpie_discovery PUBLIC MAGPIE_WITH_DISCOVERY)
-    target_compile_features(magpie_discovery PUBLIC cxx_std_14)
-
-    set_target_properties(magpie_discovery PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}
-        OUTPUT_NAME magpie-discovery
-    )
-endif()
 
 # Audio
 if(MAGPIE_WITH_AUDIO)

@@ -1,178 +1,408 @@
 #include <magpie/discovery/zconf_discovery.hpp>
 
+#include <magpie/utils/logger.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <thread>
-
-#include <magpie/utils/logger.hpp>
-
-extern "C" {
-#include "third_party/mdns/mdns.h"
-}
+#include <unordered_map>
+#include <unordered_set>
+#include <condition_variable>
 
 #ifdef _WIN32
-  #define _WINSOCK_DEPRECATED_NO_WARNINGS
   #include <winsock2.h>
   #include <ws2tcpip.h>
   #include <iphlpapi.h>
-  #pragma comment(lib, "Ws2_32.lib")
-  #pragma comment(lib, "Iphlpapi.lib")
 #else
   #include <arpa/inet.h>
   #include <netdb.h>
   #include <ifaddrs.h>
   #include <net/if.h>
   #include <sys/select.h>
+  #include <sys/time.h>
   #include <unistd.h>
 #endif
 
-namespace magpie {
-
-static constexpr size_t BUFFER_SIZE = 2048;
-static constexpr int MAX_SOCKETS = 32;
-
-// -------------------------
-// Helpers
-// -------------------------
-
-static std::string norm_host(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-  if (!s.empty() && s.back() != '.') s.push_back('.');
-  return s;
+extern "C" {
+#include "third_party/mdns/mdns.h"
 }
 
-static inline uint64_t now_ms() {
+namespace magpie {
+
+static constexpr size_t BUF_CAP = 2048;
+static constexpr int MAX_SOCKETS = 32;
+
+static uint64_t now_ms() {
   using namespace std::chrono;
   return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-static inline std::string ensure_trailing_dot(std::string s) {
-  if (!s.empty() && s.back() != '.') s.push_back('.');
+static std::string to_lower(std::string s) {
+  for (auto& c : s) c = (char)std::tolower((unsigned char)c);
   return s;
 }
 
-static inline std::string to_lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+static std::string ensure_trailing_dot(std::string s) {
+  if (s.empty()) return s;
+  if (s.back() != '.') s.push_back('.');
   return s;
 }
 
-static inline bool ends_with_case_insensitive(const std::string& s, const std::string& suf) {
-  if (s.size() < suf.size()) return false;
-  return to_lower(s.substr(s.size() - suf.size())) == to_lower(suf);
+static bool ends_with_case_insensitive(const std::string& s, const std::string& suffix) {
+  if (suffix.size() > s.size()) return false;
+  std::string a = to_lower(s.substr(s.size() - suffix.size()));
+  std::string b = to_lower(suffix);
+  return a == b;
 }
 
-static inline std::string ipv4_to_string(const sockaddr_in& addr) {
-  char buf[INET_ADDRSTRLEN] = {0};
-  inet_ntop(AF_INET, (void*)&addr.sin_addr, buf, sizeof(buf));
-  return std::string(buf);
+static std::string norm_host(const std::string& h) {
+  // normalize: lowercase + ensure trailing dot
+  return ensure_trailing_dot(to_lower(h));
 }
 
-static inline std::string ipv6_to_string(const sockaddr_in6& addr) {
-  char buf[INET6_ADDRSTRLEN] = {0};
-  inet_ntop(AF_INET6, (void*)&addr.sin6_addr, buf, sizeof(buf));
-  return std::string(buf);
+static std::string ipv4_to_string(const sockaddr_in& a) {
+  char ip[INET_ADDRSTRLEN] = {0};
+  if (!inet_ntop(AF_INET, (void*)&a.sin_addr, ip, sizeof(ip))) return {};
+  return std::string(ip);
 }
 
-static inline std::string get_hostname() {
+static std::string ipv6_to_string(const sockaddr_in6& a) {
+  char ip[INET6_ADDRSTRLEN] = {0};
+  if (!inet_ntop(AF_INET6, (void*)&a.sin6_addr, ip, sizeof(ip))) return {};
+  return std::string(ip);
+}
+
+#ifndef _WIN32
+static void get_hostname(std::string& out) {
   char buf[256] = {0};
-#ifdef _WIN32
-  DWORD sz = (DWORD)sizeof(buf);
-  if (GetComputerNameA(buf, &sz)) return std::string(buf);
-  return "host";
+  if (gethostname(buf, sizeof(buf) - 1) == 0) out = buf;
+  else out = "magpie";
+}
 #else
-  if (gethostname(buf, sizeof(buf)) == 0) return std::string(buf);
-  return "host";
+static void get_hostname(std::string& out) {
+  char buf[256] = {0};
+  DWORD sz = (DWORD)sizeof(buf);
+  if (GetComputerNameA(buf, &sz)) out = buf;
+  else out = "magpie";
+}
 #endif
+
+// Enumerate local addresses + open sockets per interface (client mode).
+// This follows mdns.c logic: "when sending, each socket can only send to one interface".
+struct IfaceAddr {
+  bool is_v6 = false;
+  sockaddr_in v4{};
+  sockaddr_in6 v6{};
+};
+
+#ifndef _WIN32
+
+static bool is_good_iface(const ifaddrs* ifa) {
+  if (!ifa || !ifa->ifa_addr) return false;
+  if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_MULTICAST)) return false;
+  if ((ifa->ifa_flags & IFF_POINTOPOINT)) return false;
+  // NOTE: mdns.c skips LOOPBACK for opening client sockets; we keep it skipped for sending,
+  // but we still allow discovered IP lists to include 127.* if advertised by others.
+  if (ifa->ifa_flags & IFF_LOOPBACK) return false;
+  return true;
 }
 
-static inline std::string make_host_qualified(const std::string& hostname) {
-  // "<hostname>.local."
-  std::string h = hostname;
-  // keep it simple; mdns.c doesn't do extensive sanitization either
-  return h + ".local.";
+static std::vector<IfaceAddr> enumerate_ifaces() {
+  std::vector<IfaceAddr> out;
+  ifaddrs* ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) < 0) return out;
+
+  for (ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
+    if (!is_good_iface(ifa)) continue;
+
+    if (ifa->ifa_addr->sa_family == AF_INET) {
+      auto* saddr = (sockaddr_in*)ifa->ifa_addr;
+      if (saddr->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) continue;
+      IfaceAddr ia;
+      ia.is_v6 = false;
+      ia.v4 = *saddr;
+      out.push_back(ia);
+    } else if (ifa->ifa_addr->sa_family == AF_INET6) {
+      auto* saddr6 = (sockaddr_in6*)ifa->ifa_addr;
+      // ignore link-local (scope_id != 0 in mdns.c example)
+      if (saddr6->sin6_scope_id) continue;
+
+      // ignore ::1 and mapped 127.0.0.1 variants like mdns.c
+      static const unsigned char localhost[] =
+          {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1};
+      static const unsigned char localhost_mapped[] =
+          {0,0,0,0,0,0,0,0,0,0,0xff,0xff,0x7f,0,0,1};
+      if (!memcmp(saddr6->sin6_addr.s6_addr, localhost, 16)) continue;
+      if (!memcmp(saddr6->sin6_addr.s6_addr, localhost_mapped, 16)) continue;
+
+      IfaceAddr ia;
+      ia.is_v6 = true;
+      ia.v6 = *saddr6;
+      out.push_back(ia);
+    }
+  }
+
+  freeifaddrs(ifaddr);
+  return out;
 }
 
-static inline std::string make_instance_name(const std::string& node_id, const std::string& service_type) {
-  // "<node_id>.<service_type>"
-  return node_id + "." + service_type;
+static bool is_bad_virtual_iface_name(const char* name) {
+  if (!name) return false;
+  // common virtual/container bridges & peers
+  if (strcmp(name, "docker0") == 0) return true;
+  if (strncmp(name, "br-",   3) == 0) return true;
+  if (strncmp(name, "veth",  4) == 0) return true;
+  if (strncmp(name, "virbr", 5) == 0) return true;
+  if (strncmp(name, "tun",   3) == 0) return true;
+  if (strncmp(name, "wg",    2) == 0) return true;
+  return false;
 }
 
-static inline std::string node_id_from_instance(const std::string& instance) {
-  auto pos = instance.find('.');
-  if (pos == std::string::npos) return instance;
-  return instance.substr(0, pos);
+static int open_client_sockets(int* socks, int max_socks, int port) {
+  auto ifs = enumerate_ifaces();
+  int n = 0;
+  for (auto& ia : ifs) {
+    if (n >= max_socks) break;
+    if (!ia.is_v6) {
+      ia.v4.sin_port = htons((unsigned short)port);
+      int s = mdns_socket_open_ipv4(&ia.v4);
+      if (s >= 0) socks[n++] = s;
+    } else {
+      ia.v6.sin6_port = htons((unsigned short)port);
+      int s = mdns_socket_open_ipv6(&ia.v6);
+      if (s >= 0) socks[n++] = s;
+    }
+  }
+  return n;
 }
 
-static inline bool is_usable_ip(const std::string& ip) {
-  return !(ip.rfind("127.", 0) == 0 || ip.rfind("169.254.", 0) == 0 || ip == "::1");
+static int open_service_sockets(int* socks, int max_socks) {
+  // Same idea as mdns.c: one socket per family, bound to MDNS_PORT on INADDR_ANY.
+  int n = 0;
+
+  if (n < max_socks) {
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = INADDR_ANY;
+    sa.sin_port = htons((unsigned short)MDNS_PORT);
+    int s = mdns_socket_open_ipv4(&sa);
+    if (s >= 0) socks[n++] = s;
+  }
+
+  if (n < max_socks) {
+    sockaddr_in6 sa6{};
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_addr = in6addr_any;
+    sa6.sin6_port = htons((unsigned short)MDNS_PORT);
+    int s = mdns_socket_open_ipv6(&sa6);
+    if (s >= 0) socks[n++] = s;
+  }
+
+  return n;
 }
 
-// -------------------------
-// Impl
-// -------------------------
+#else
+// Windows: keep a minimal single-socket fallback.
+// If you need full parity like mdns.c on Windows, we can port open_client_sockets using GetAdaptersAddresses.
+static int open_client_sockets(int* socks, int max_socks, int port) {
+  (void)port;
+  int n = 0;
+  if (n < max_socks) {
+    int s = mdns_socket_open_ipv4(nullptr);
+    if (s >= 0) socks[n++] = s;
+  }
+  if (n < max_socks) {
+    int s = mdns_socket_open_ipv6(nullptr);
+    if (s >= 0) socks[n++] = s;
+  }
+  return n;
+}
+
+static int open_service_sockets(int* socks, int max_socks) {
+  int n = 0;
+  if (n < max_socks) {
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = INADDR_ANY;
+    sa.sin_port = htons((unsigned short)MDNS_PORT);
+    int s = mdns_socket_open_ipv4(&sa);
+    if (s >= 0) socks[n++] = s;
+  }
+  if (n < max_socks) {
+    sockaddr_in6 sa6{};
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_addr = in6addr_any;
+    sa6.sin6_port = htons((unsigned short)MDNS_PORT);
+    int s = mdns_socket_open_ipv6(&sa6);
+    if (s >= 0) socks[n++] = s;
+  }
+  return n;
+}
+#endif
 
 struct ZconfDiscovery::Impl {
-
   explicit Impl(std::string service_type)
-  : service_type_(ensure_trailing_dot(std::move(service_type))) {}
+      : service_type_(ensure_trailing_dot(std::move(service_type))) {}
 
-  ~Impl() { stop(); }
+  // ---- Public facing state ----
+  std::string service_type_;
 
+  mutable std::mutex mtx_;
+  mutable std::condition_variable cv_;
+  std::unordered_map<std::string, NodeInfo> nodes_;                  // node_id -> NodeInfo
+  std::unordered_map<std::string, std::string> instance_to_node_;    // instance -> node_id
+  std::unordered_map<std::string, std::string> host_to_node_;        // host(norm) -> node_id
+
+  // If A/AAAA arrives before SRV host mapping, we keep it here and apply later.
+  std::unordered_map<std::string, std::vector<std::string>> pending_ips_by_host_;  // host(norm)->ips
+
+  // TTL handling (simple): node_id -> expire time; list_nodes can filter.
+  std::unordered_map<std::string, uint64_t> expire_ms_by_node_;
+
+  // ---- Advertising state ----
+  mutable std::mutex adv_mtx_;
+  bool advertising_ = false;
+  std::string adv_node_id_;
+  std::uint16_t adv_port_ = 0;
+  std::string adv_payload_json_ = "{}";
+  std::vector<std::string> adv_ips_;
+  std::string adv_hostname_;
+  std::string adv_instance_;
+  std::string adv_host_qualified_;
+
+  // ---- Thread ----
+  std::atomic<bool> running_{false};
+  std::atomic<bool> closing_{false};
+  std::thread worker_;
+
+  // sockets
+  int service_socks_[MAX_SOCKETS]{};
+  int client_socks_[MAX_SOCKETS]{};
+  int n_service_ = 0;
+  int n_client_ = 0;
+
+  // Buffers (thread-local usage)
+  uint8_t recvbuf_[BUF_CAP]{};
+  char sendbuf_[BUF_CAP]{};
+
+  // Query pacing
+  uint64_t last_ptr_query_ms_ = 0;
+  uint64_t last_refresh_ms_ = 0;
+
+  // Avoid spamming identical follow-up queries
+  std::unordered_set<std::string> queried_instance_;  // instance we already queried SRV/TXT for
+  std::unordered_set<std::string> queried_host_;      // host we already queried A/AAAA for
+
+  // ---- API ----
   void start() {
-#ifdef _WIN32
-    // ensure WSAStartup once
-    static std::once_flag wsa_once;
-    std::call_once(wsa_once, []{
-      WSADATA wsaData;
-      WSAStartup(MAKEWORD(2,2), &wsaData);
-    });
-#endif
-    if (running_.exchange(true)) return;
-    closing_.store(false);
+    if (running_) return;
+    closing_ = false;
+    running_ = true;
     worker_ = std::thread(&Impl::thread_main, this);
   }
 
-  void stop() {
-    if (!running_.load()) return;
-    closing_.store(true);
+  void close() {
+    if (!running_) return;
+    closing_ = true;
     if (worker_.joinable()) worker_.join();
 
-    // goodbye if needed
-    {
-      std::lock_guard<std::mutex> lk(adv_mtx_);
-      if (advertising_) {
-        send_goodbye_locked_();
-        advertising_ = false;
-      }
-    }
+    // Goodbye if still advertising
+    send_goodbye_if_needed_();
 
-    close_sockets_();
-    running_.store(false);
+    for (int i = 0; i < n_service_; ++i) mdns_socket_close(service_socks_[i]);
+    for (int i = 0; i < n_client_;  ++i) mdns_socket_close(client_socks_[i]);
+    n_service_ = n_client_ = 0;
+
+    running_ = false;
   }
 
-  void advertise(const std::string& node_id, std::uint16_t port, const std::string& payload_json) {
+  void advertise(const std::string& node_id,
+                 std::uint16_t port,
+                 const std::string& payload_json,
+                 const std::vector<std::string>& ips) {
     start();
+
     std::lock_guard<std::mutex> lk(adv_mtx_);
     advertising_ = true;
     adv_node_id_ = node_id;
     adv_port_ = port;
     adv_payload_json_ = payload_json.empty() ? "{}" : payload_json;
 
-    adv_hostname_ = get_hostname();
-    adv_host_qualified_ = make_host_qualified(adv_hostname_);
-    adv_instance_name_ = make_instance_name(adv_node_id_, service_type_);
+    // Build names like mdns.c does: instance and host qualified.
+    // We use node_id as hostname-ish identifier.
+    adv_instance_ = ensure_trailing_dot(node_id + "." + service_type_);
+    adv_host_qualified_ = ensure_trailing_dot(node_id + ".local.");
 
-    // announce once immediately (like mdns.c)
+    // Choose IPs
+    adv_ips_.clear();
+    if (!ips.empty()) {
+      adv_ips_ = ips;
+    } else {
+      // enumerate local interface IPs (both v4 and v6)
+      // We include everything found (like python does), even docker/veth.
+      // If you want filtering, do it at caller or later.
+#ifndef _WIN32
+      ifaddrs* ifaddr = nullptr;
+      if (getifaddrs(&ifaddr) == 0) {
+        for (ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
+          if (!ifa->ifa_addr) continue;
+          if (!(ifa->ifa_flags & IFF_UP)) continue;
+
+          // NEW: skip docker/bridge/veth/etc from advertisement
+          if (is_bad_virtual_iface_name(ifa->ifa_name)) continue;
+                    
+          if (ifa->ifa_addr->sa_family == AF_INET) {
+            auto* sa = (sockaddr_in*)ifa->ifa_addr;
+            char ip[INET_ADDRSTRLEN]{};
+            if (inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip))) {
+              adv_ips_.push_back(ip);
+            }
+          } else if (ifa->ifa_addr->sa_family == AF_INET6) {
+            auto* sa6 = (sockaddr_in6*)ifa->ifa_addr;
+            char ip[INET6_ADDRSTRLEN]{};
+            if (inet_ntop(AF_INET6, &sa6->sin6_addr, ip, sizeof(ip))) {
+              adv_ips_.push_back(ip);
+            }
+          }
+        }
+        freeifaddrs(ifaddr);
+      }
+#else
+      // Windows: keep simple, caller can supply ips.
+#endif
+      // de-dup
+      std::sort(adv_ips_.begin(), adv_ips_.end());
+      adv_ips_.erase(std::unique(adv_ips_.begin(), adv_ips_.end()), adv_ips_.end());
+    }
+
+    // Also send an announce immediately (best practice)
     send_announce_locked_();
   }
 
   void stop_advertising() {
     std::lock_guard<std::mutex> lk(adv_mtx_);
     if (!advertising_) return;
+    // Send goodbye before flipping off
     send_goodbye_locked_();
     advertising_ = false;
+  }
+
+  std::vector<NodeInfo> list_nodes() const {
+    const uint64_t now = now_ms();
+    std::lock_guard<std::mutex> lk(mtx_);
+    std::vector<NodeInfo> out;
+    out.reserve(nodes_.size());
+    for (auto const& kv : nodes_) {
+      auto itexp = expire_ms_by_node_.find(kv.first);
+      if (itexp != expire_ms_by_node_.end() && itexp->second != 0 && itexp->second < now) {
+        continue;  // expired
+      }
+      out.push_back(kv.second);
+    }
+    return out;
   }
 
   bool resolve_node(const std::string& node_id, NodeInfo& out, double timeout_sec) const {
@@ -191,288 +421,7 @@ struct ZconfDiscovery::Impl {
     }
   }
 
-  std::vector<ZconfDiscovery::NodeInfo> list_nodes() const {
-    std::lock_guard<std::mutex> lk(mtx_);
-    std::vector<NodeInfo> out;
-    out.reserve(nodes_.size());
-
-    const uint64_t now = now_ms();
-
-    for (const auto& kv : nodes_) {
-      auto itExp = second_expire_ms_.find(kv.first);
-      if (itExp != second_expire_ms_.end()) {
-        const uint64_t exp = itExp->second;
-        if (exp != 0 && exp < now) continue; // expired
-      }
-      out.push_back(kv.second);
-    }
-
-    return out;
-  }
-
-
-  static std::string pick_best_ip(const NodeInfo& node) {
-    for (const auto& ip : node.ips)
-      if (is_usable_ip(ip)) return ip;
-    return node.ips.empty() ? "" : node.ips.front();
-  }
-
-  // ---------------
-  // Socket opening
-  // ---------------
-
-  void close_sockets_() {
-    for (int i = 0; i < service_socket_count_; ++i) {
-      if (service_sockets_[i] >= 0) mdns_socket_close(service_sockets_[i]);
-      service_sockets_[i] = -1;
-    }
-    service_socket_count_ = 0;
-
-    for (int i = 0; i < client_socket_count_; ++i) {
-      if (client_sockets_[i] >= 0) mdns_socket_close(client_sockets_[i]);
-      client_sockets_[i] = -1;
-    }
-    client_socket_count_ = 0;
-  }
-
-  int open_service_sockets_ipv4_ipv6_() {
-    // Like mdns.c: bind to 5353 for listening
-    int n = 0;
-
-    // IPv4
-    if (n < MAX_SOCKETS) {
-      sockaddr_in sa{};
-      sa.sin_family = AF_INET;
-#ifdef _WIN32
-      sa.sin_addr.s_addr = INADDR_ANY;
-#else
-      sa.sin_addr.s_addr = INADDR_ANY;
-#endif
-      sa.sin_port = htons((unsigned short)MDNS_PORT);
-      int sock = mdns_socket_open_ipv4(&sa);
-      if (sock >= 0) service_sockets_[n++] = sock;
-    }
-
-    // IPv6 (optional but recommended)
-    if (n < MAX_SOCKETS) {
-      sockaddr_in6 sa6{};
-      sa6.sin6_family = AF_INET6;
-      sa6.sin6_addr = in6addr_any;
-      sa6.sin6_port = htons((unsigned short)MDNS_PORT);
-      int sock6 = mdns_socket_open_ipv6(&sa6);
-      if (sock6 >= 0) service_sockets_[n++] = sock6;
-    }
-
-    service_socket_count_ = n;
-    return n;
-  }
-
-  int open_client_sockets_per_interface_(int port) {
-    // Like mdns.c: per-interface ephemeral sockets for sending queries
-    int n = 0;
-
-#ifdef _WIN32
-    ULONG addr_size = 15000;
-    std::vector<uint8_t> buf(addr_size);
-    IP_ADAPTER_ADDRESSES* aa = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
-    ULONG ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_ANYCAST, nullptr, aa, &addr_size);
-    if (ret == ERROR_BUFFER_OVERFLOW) {
-      buf.resize(addr_size);
-      aa = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
-      ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_ANYCAST, nullptr, aa, &addr_size);
-    }
-    if (ret != NO_ERROR) return 0;
-
-    for (auto* adapter = aa; adapter && n < MAX_SOCKETS; adapter = adapter->Next) {
-      if (adapter->OperStatus != IfOperStatusUp) continue;
-      if (adapter->TunnelType == TUNNEL_TYPE_TEREDO) continue;
-
-      for (auto* unicast = adapter->FirstUnicastAddress; unicast && n < MAX_SOCKETS; unicast = unicast->Next) {
-        sockaddr* sa = unicast->Address.lpSockaddr;
-        if (!sa) continue;
-
-        if (sa->sa_family == AF_INET) {
-          auto* saddr = reinterpret_cast<sockaddr_in*>(sa);
-          // skip loopback
-          if ((ntohl(saddr->sin_addr.s_addr) >> 24) == 127) continue;
-
-          sockaddr_in bindaddr = *saddr;
-          bindaddr.sin_port = htons((unsigned short)port); // 0 => ephemeral
-          int sock = mdns_socket_open_ipv4(&bindaddr);
-          if (sock >= 0) client_sockets_[n++] = sock;
-        } else if (sa->sa_family == AF_INET6) {
-          auto* saddr6 = reinterpret_cast<sockaddr_in6*>(sa);
-          // skip link-local
-          if (saddr6->sin6_scope_id) continue;
-
-          sockaddr_in6 bindaddr6 = *saddr6;
-          bindaddr6.sin6_port = htons((unsigned short)port);
-          int sock6 = mdns_socket_open_ipv6(&bindaddr6);
-          if (sock6 >= 0) client_sockets_[n++] = sock6;
-        }
-      }
-    }
-
-#else
-    ifaddrs* ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) != 0) return 0;
-
-    for (auto* ifa = ifaddr; ifa && n < MAX_SOCKETS; ifa = ifa->ifa_next) {
-      if (!ifa->ifa_addr) continue;
-      if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_MULTICAST)) continue;
-      if ((ifa->ifa_flags & IFF_LOOPBACK) || (ifa->ifa_flags & IFF_POINTOPOINT)) continue;
-
-      if (ifa->ifa_addr->sa_family == AF_INET) {
-        auto* saddr = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
-        if (saddr->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) continue;
-
-        sockaddr_in bindaddr = *saddr;
-        bindaddr.sin_port = htons((unsigned short)port);
-        int sock = mdns_socket_open_ipv4(&bindaddr);
-        if (sock >= 0) client_sockets_[n++] = sock;
-      } else if (ifa->ifa_addr->sa_family == AF_INET6) {
-        auto* saddr6 = reinterpret_cast<sockaddr_in6*>(ifa->ifa_addr);
-        // ignore link-local
-        if (saddr6->sin6_scope_id) continue;
-
-        sockaddr_in6 bindaddr6 = *saddr6;
-        bindaddr6.sin6_port = htons((unsigned short)port);
-        int sock6 = mdns_socket_open_ipv6(&bindaddr6);
-        if (sock6 >= 0) client_sockets_[n++] = sock6;
-      }
-    }
-
-    freeifaddrs(ifaddr);
-#endif
-
-    client_socket_count_ = n;
-    return n;
-  }
-
-  // ---------------
-  // Records (advertising)
-  // ---------------
-
-  void build_advertise_records_locked_(mdns_record_t& ptr_rec,
-                                      mdns_record_t& srv_rec,
-                                      mdns_record_t& txt_node_id,
-                                      mdns_record_t& txt_proto,
-                                      mdns_record_t& txt_payload,
-                                      mdns_record_t& a_rec,
-                                      mdns_record_t& aaaa_rec,
-                                      bool& has_a,
-                                      bool& has_aaaa) {
-    // PTR: service_type -> instance_name
-    ptr_rec = {};
-    ptr_rec.name.str = service_type_.c_str();
-    ptr_rec.name.length = service_type_.size();
-    ptr_rec.type = MDNS_RECORDTYPE_PTR;
-    ptr_rec.data.ptr.name.str = adv_instance_name_.c_str();
-    ptr_rec.data.ptr.name.length = adv_instance_name_.size();
-
-    // SRV: instance_name -> host_qualified + port
-    srv_rec = {};
-    srv_rec.name.str = adv_instance_name_.c_str();
-    srv_rec.name.length = adv_instance_name_.size();
-    srv_rec.type = MDNS_RECORDTYPE_SRV;
-    srv_rec.data.srv.name.str = adv_host_qualified_.c_str();
-    srv_rec.data.srv.name.length = adv_host_qualified_.size();
-    srv_rec.data.srv.port = adv_port_;
-    srv_rec.data.srv.priority = 0;
-    srv_rec.data.srv.weight = 0;
-
-    // TXT: instance_name key/values (library coalesces)
-    txt_node_id = {};
-    txt_node_id.name.str = adv_instance_name_.c_str();
-    txt_node_id.name.length = adv_instance_name_.size();
-    txt_node_id.type = MDNS_RECORDTYPE_TXT;
-    txt_node_id.data.txt.key = { "node_id", strlen("node_id") };
-    txt_node_id.data.txt.value = { adv_node_id_.c_str(), adv_node_id_.size() };
-
-    txt_proto = {};
-    txt_proto.name.str = adv_instance_name_.c_str();
-    txt_proto.name.length = adv_instance_name_.size();
-    txt_proto.type = MDNS_RECORDTYPE_TXT;
-    txt_proto.data.txt.key = { "proto", strlen("proto") };
-    static const char kProto[] = "zmq";
-    txt_proto.data.txt.value = { kProto, strlen(kProto) };
-
-    txt_payload = {};
-    txt_payload.name.str = adv_instance_name_.c_str();
-    txt_payload.name.length = adv_instance_name_.size();
-    txt_payload.type = MDNS_RECORDTYPE_TXT;
-    txt_payload.data.txt.key = { "payload", strlen("payload") };
-    txt_payload.data.txt.value = { adv_payload_json_.c_str(), adv_payload_json_.size() };
-
-    // A/AAAA records for host_qualified (optional; nice to include)
-    has_a = false;
-    has_aaaa = false;
-
-    a_rec = {};
-    a_rec.name.str = adv_host_qualified_.c_str();
-    a_rec.name.length = adv_host_qualified_.size();
-    a_rec.type = MDNS_RECORDTYPE_A;
-
-    aaaa_rec = {};
-    aaaa_rec.name.str = adv_host_qualified_.c_str();
-    aaaa_rec.name.length = adv_host_qualified_.size();
-    aaaa_rec.type = MDNS_RECORDTYPE_AAAA;
-
-    // For addresses: we don’t try to be perfect; service sockets + SRV is enough for python/cpp.
-    // But we can attach local interface IPs opportunistically by letting mdns answer A/AAAA to questions.
-    // Here we leave them unset; we instead answer A/AAAA queries by parsing local IPs on demand in service_callback.
-  }
-
-  void send_announce_locked_() {
-    if (service_socket_count_ <= 0) return;
-
-    uint8_t buffer[BUFFER_SIZE];
-
-    mdns_record_t ptr{}, srv{}, txt_node_id{}, txt_proto{}, txt_payload{};
-    mdns_record_t a{}, aaaa{};
-    bool has_a=false, has_aaaa=false;
-    build_advertise_records_locked_(ptr, srv, txt_node_id, txt_proto, txt_payload, a, aaaa, has_a, has_aaaa);
-
-    mdns_record_t additional[8] = {};
-    size_t add_count = 0;
-    additional[add_count++] = srv;
-    additional[add_count++] = txt_node_id;
-    additional[add_count++] = txt_proto;
-    additional[add_count++] = txt_payload;
-
-    for (int i = 0; i < service_socket_count_; ++i) {
-      mdns_announce_multicast(service_sockets_[i], buffer, sizeof(buffer),
-                              ptr, nullptr, 0, additional, add_count);
-    }
-  }
-
-  void send_goodbye_locked_() {
-    if (service_socket_count_ <= 0) return;
-
-    uint8_t buffer[BUFFER_SIZE];
-
-    mdns_record_t ptr{}, srv{}, txt_node_id{}, txt_proto{}, txt_payload{};
-    mdns_record_t a{}, aaaa{};
-    bool has_a=false, has_aaaa=false;
-    build_advertise_records_locked_(ptr, srv, txt_node_id, txt_proto, txt_payload, a, aaaa, has_a, has_aaaa);
-
-    mdns_record_t additional[8] = {};
-    size_t add_count = 0;
-    additional[add_count++] = srv;
-    additional[add_count++] = txt_node_id;
-    additional[add_count++] = txt_proto;
-    additional[add_count++] = txt_payload;
-
-    for (int i = 0; i < service_socket_count_; ++i) {
-      mdns_goodbye_multicast(service_sockets_[i], buffer, sizeof(buffer),
-                             ptr, nullptr, 0, additional, add_count);
-    }
-  }
-
-  // ---------------
-  // Callbacks
-  // ---------------
-
+  // ---- mdns glue ----
   static int mdns_callback(int sock,
                            const struct sockaddr* from,
                            size_t addrlen,
@@ -490,575 +439,773 @@ struct ZconfDiscovery::Impl {
                            void* user_data) {
     (void)query_id; (void)name_length;
     auto* self = static_cast<Impl*>(user_data);
-    self->handle_record(sock, from, addrlen, entry, rtype, rclass, ttl, data, size,
-                        name_offset, record_offset, record_length);
+    self->handle_record(sock, from, addrlen, entry, rtype, rclass, ttl,
+                        data, size, name_offset, record_offset, record_length);
     return 0;
   }
 
-    void handle_record(int sock,
-                    const struct sockaddr* from,
-                    size_t addrlen,
-                    mdns_entry_type_t entry,
-                    uint16_t rtype,
-                    uint16_t rclass,
-                    uint32_t ttl,
-                    const void* data,
-                    size_t size,
-                    size_t name_offset,
-                    size_t record_offset,
-                    size_t record_length) {
-    (void)sock; (void)from; (void)addrlen; (void)rclass;
+  // Convert "<node_id>.<service_type>" -> node_id
+  std::string node_id_from_instance(const std::string& instance) const {
+    // instance is "<node_id>.<service_type_>" typically with trailing dot
+    std::string s = instance;
+    s = to_lower(s);
+    std::string st = to_lower(service_type_);
+    // Ensure both have trailing dot
+    s = ensure_trailing_dot(s);
+    st = ensure_trailing_dot(st);
 
-    // 1) Service side: answer QUESTIONS (best practice, do not rely on announce)
-    if (entry == MDNS_ENTRYTYPE_QUESTION) {
-      handle_question_(sock, from, addrlen, rtype, rclass, ttl, data, size, name_offset);
-      return;
-    }
-
-    // 2) Client side: parse ANSWERS/AUTHORITY/ADDITIONAL to build node map
-    if (entry != MDNS_ENTRYTYPE_ANSWER && entry != MDNS_ENTRYTYPE_AUTHORITY &&
-        entry != MDNS_ENTRYTYPE_ADDITIONAL)
-      return;
-
-    // Extract the owner name
-    char namebuf[256] = {0};
-    size_t nofs = name_offset;
-    mdns_string_t owner = mdns_string_extract(data, size, &nofs, namebuf, sizeof(namebuf));
-    if (!owner.str || !owner.length) return;
-
-    const uint64_t now = now_ms();
-    const uint64_t expire_ms = (ttl == 0) ? 0 : (now + (uint64_t)ttl * 1000ULL);
-
-    if (rtype == MDNS_RECORDTYPE_PTR) {
-      // PTR record: service_type -> instance
-      char instbuf[256] = {0};
-      mdns_string_t inst = mdns_record_parse_ptr(data, size, record_offset, record_length,
-                                                instbuf, sizeof(instbuf));
-      if (!inst.str || !inst.length) return;
-
-      std::string owner_name(owner.str, owner.length);
-      std::string instance(inst.str, inst.length);
-
-      // Only our service type
-      if (!ends_with_case_insensitive(owner_name, service_type_)) return;
-      // Instance should end with service_type too
-      if (!ends_with_case_insensitive(instance, service_type_)) return;
-
-      std::string node_id = node_id_from_instance(instance);
-
-      std::lock_guard<std::mutex> lk(mtx_);
-      NodeInfo& ni = nodes_[node_id];
-      ni.node_id = node_id;
-      ni.instance_name = instance;
-
-      // TTL=0 means goodbye -> remove
-      if (ttl == 0) {
-        nodes_.erase(node_id);
-        instance_to_node_.erase(instance);
-        second_expire_ms_.erase(node_id);
-        cv_.notify_all();
-        return;
-      }
-
-      instance_to_node_[instance] = node_id;
-      second_expire_ms_[node_id] = expire_ms;
-      cv_.notify_all();
-      return;
-    }
-
-    if (rtype == MDNS_RECORDTYPE_SRV) {
-      // SRV: instance -> host_qualified + port
-      char hostbuf[256] = {0};
-      mdns_record_srv_t srv = mdns_record_parse_srv(data, size, record_offset, record_length,
-                                                    hostbuf, sizeof(hostbuf));
-      if (!srv.name.str || !srv.name.length) return;
-
-      std::string instance(owner.str, owner.length);
-      if (!ends_with_case_insensitive(instance, service_type_)) return;
-
-      std::string host(srv.name.str, srv.name.length);
-      std::string host_norm = norm_host(host);
-
-      std::lock_guard<std::mutex> lk(mtx_);
-      auto itInst = instance_to_node_.find(instance);
-      std::string node_id = (itInst != instance_to_node_.end()) ? itInst->second
-                                                                : node_id_from_instance(instance);
-
-      NodeInfo& ni = nodes_[node_id];
-      ni.node_id = node_id;
-      ni.instance_name = instance;
-      ni.host_qualified = host;              // keep original
-      ni.port = (uint16_t)srv.port;
-
-      // TTL=0 goodbye -> drop
-      if (ttl == 0) {
-        nodes_.erase(node_id);
-        instance_to_node_.erase(instance);
-        host_to_node_.erase(host);
-        host_to_node_.erase(host_norm);
-        pending_ips_by_host_.erase(host_norm);
-        second_expire_ms_.erase(node_id);
-        cv_.notify_all();
-        return;
-      }
-
-      // map host -> node
-      host_to_node_[host] = node_id;         // keep original (for safety)
-      host_to_node_[host_norm] = node_id;
-
-      // apply pending ips if any
-      auto pit = pending_ips_by_host_.find(host_norm);
-      if (pit != pending_ips_by_host_.end()) {
-        auto& ips = ni.ips;
-        for (const auto& ip : pit->second)
-          if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
-        pending_ips_by_host_.erase(pit);
-      }
-
-      second_expire_ms_[node_id] = expire_ms;
-      cv_.notify_all();
-      return;
-    }
-
-    if (rtype == MDNS_RECORDTYPE_TXT) {
-      // TXT: instance -> key/value pairs; we care about node_id + payload
-      mdns_record_txt_t txt[16];
-      size_t parsed = mdns_record_parse_txt(data, size, record_offset, record_length, txt,
-                                            sizeof(txt) / sizeof(txt[0]));
-      std::string instance(owner.str, owner.length);
-      if (!ends_with_case_insensitive(instance, service_type_)) return;
-
-      std::string node_id = node_id_from_instance(instance);
-      std::string payload = "{}";
-      for (size_t i = 0; i < parsed; ++i) {
-        std::string key(txt[i].key.str ? txt[i].key.str : "", txt[i].key.length);
-        std::string val(txt[i].value.str ? txt[i].value.str : "", txt[i].value.length);
-        if (key == "node_id" && !val.empty()) node_id = val;
-        if (key == "payload") payload = val.empty() ? "{}" : val;
-      }
-
-      std::lock_guard<std::mutex> lk(mtx_);
-      NodeInfo& ni = nodes_[node_id];
-      ni.node_id = node_id;
-      ni.instance_name = instance;
-      ni.payload_json = payload;
-
-      if (ttl == 0) {
-        nodes_.erase(node_id);
-        instance_to_node_.erase(instance);
-        second_expire_ms_.erase(node_id);
-        cv_.notify_all();
-        return;
-      }
-
-      second_expire_ms_[node_id] = expire_ms;
-      cv_.notify_all();
-      return;
-    }
-
-    if (rtype == MDNS_RECORDTYPE_A) {
-      // Logger::debug(
-      //   "[A] owner='" + std::string(owner.str, owner.length) +
-      //   "' ttl=" + std::to_string(ttl)
-      // );
-
-      // A: host_qualified -> IPv4
-      sockaddr_in addr{};
-      mdns_record_parse_a(data, size, record_offset, record_length, &addr);
-
-      std::string ip = ipv4_to_string(addr);
-      if (ip.empty()) return;
-
-      std::string host(owner.str, owner.length);
-      std::string host_norm = norm_host(host);
-
-      // Logger::debug(
-      //   "[A] host raw='" + host +
-      //   "' norm='" + host_norm +
-      //   "' mapped=" +
-      //   (host_to_node_.count(host_norm) ? "yes" : "no")
-      // );
-
-      std::lock_guard<std::mutex> lk(mtx_);
-      auto itHost = host_to_node_.find(host_norm);
-      if (itHost == host_to_node_.end()) {
-        // SRV not seen yet -> cache
-        if (ttl != 0) {
-          auto& pend = pending_ips_by_host_[host_norm];
-          if (std::find(pend.begin(), pend.end(), ip) == pend.end()) pend.push_back(ip);
-        }
-        return;
-      }
-
-      const std::string& node_id = itHost->second;
-      auto it = nodes_.find(node_id);
-      if (it == nodes_.end()) return;
-
-      if (ttl == 0) {
-        auto& ips = it->second.ips;
-        ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
-        cv_.notify_all();
-        return;
-      }
-
-      auto& ips = it->second.ips;
-      if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
-      second_expire_ms_[node_id] = expire_ms;
-      cv_.notify_all();
-      return;
-    }
-
-    if (rtype == MDNS_RECORDTYPE_AAAA) {
-      // Logger::debug(
-      //   "[AAAA] owner='" + std::string(owner.str, owner.length) +
-      //   "' ttl=" + std::to_string(ttl)
-      // );      
-      // AAAA: host_qualified -> IPv6
-      sockaddr_in6 addr6{};
-      mdns_record_parse_aaaa(data, size, record_offset, record_length, &addr6);
-
-      std::string ip = ipv6_to_string(addr6);
-      if (ip.empty()) return;
-
-      std::string host(owner.str, owner.length);
-      std::string host_norm = norm_host(host);
-
-      // Logger::debug(
-      //   "[A] host raw='" + host +
-      //   "' norm='" + host_norm +
-      //   "' mapped=" +
-      //   (host_to_node_.count(host_norm) ? "yes" : "no")
-      // );
-
-      std::lock_guard<std::mutex> lk(mtx_);
-      auto itHost = host_to_node_.find(host_norm);
-      if (itHost == host_to_node_.end()) {
-        // SRV not seen yet -> cache
-        if (ttl != 0) {
-          auto& pend = pending_ips_by_host_[host_norm];
-          if (std::find(pend.begin(), pend.end(), ip) == pend.end()) pend.push_back(ip);
-        }
-        return;
-      }
-
-      const std::string& node_id = itHost->second;
-      auto it = nodes_.find(node_id);
-      if (it == nodes_.end()) return;
-
-      if (ttl == 0) {
-        auto& ips = it->second.ips;
-        ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
-        cv_.notify_all();
-        return;
-      }
-
-      auto& ips = it->second.ips;
-      if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
-      second_expire_ms_[node_id] = expire_ms;
-      cv_.notify_all();
-      return;
-    }
+    if (!ends_with_case_insensitive(s, st)) return {};
+    // strip ".<service_type_>"
+    // Example: nodeid._magpie._tcp.local.
+    // Remove suffix length
+    std::string node = s.substr(0, s.size() - st.size());
+    // node might end with '.', remove it
+    if (!node.empty() && node.back() == '.') node.pop_back();
+    return node;
   }
 
-
+  // ---- service side: answer QUESTIONS (like mdns.c) ----
   void handle_question_(int sock,
                         const struct sockaddr* from,
                         size_t addrlen,
-                        uint16_t qtype,
-                        uint16_t qclass,
+                        uint16_t rtype,
+                        uint16_t rclass,
                         uint32_t /*ttl*/,
                         const void* data,
                         size_t size,
                         size_t name_offset) {
-    // Only answer if we are advertising
     std::lock_guard<std::mutex> lk(adv_mtx_);
     if (!advertising_) return;
 
-    // Extract queried name
-    char qnamebuf[256] = {0};
-    size_t off = name_offset;
-    mdns_string_t qname = mdns_string_extract(data, size, &off, qnamebuf, sizeof(qnamebuf));
+    char namebuf[256]{};
+    size_t ofs = name_offset;
+    mdns_string_t qname = mdns_string_extract(data, size, &ofs, namebuf, sizeof(namebuf));
     if (!qname.str || !qname.length) return;
 
-    std::string asked(qname.str, qname.length);
+    const std::string qn(qname.str, qname.length);
+    const uint16_t unicast = (rclass & MDNS_UNICAST_RESPONSE);
 
-    // Prepare our records
-    mdns_record_t ptr{}, srv{}, txt_node_id{}, txt_proto{}, txt_payload{};
-    mdns_record_t a_rec{}, aaaa_rec{};
-    bool has_a=false, has_aaaa=false;
-    build_advertise_records_locked_(ptr, srv, txt_node_id, txt_proto, txt_payload, a_rec, aaaa_rec, has_a, has_aaaa);
+    // We answer for:
+    // - PTR service_type_ -> instance
+    // - SRV instance -> host_qualified + port
+    // - TXT instance -> node_id, payload
+    // - A/AAAA host_qualified -> IP(s)
 
-    // We follow mdns.c behavior:
-    // - If question is for our service_type (PTR/ANY) -> answer PTR + additional SRV + TXT
-    // - If question is for our instance (SRV/TXT/ANY) -> answer SRV + additional TXT
-    // - If question is for our host_qualified (A/AAAA/ANY) -> answer A/AAAA if we can
-    //
-    // To keep it robust and minimal, we always include SRV+TXT additional where relevant.
+    // Build records
+    mdns_record_t ptr{};
+    ptr.name = mdns_string_t{ service_type_.c_str(), service_type_.size() };
+    ptr.type = MDNS_RECORDTYPE_PTR;
+    ptr.data.ptr.name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
 
-    uint8_t sendbuf[BUFFER_SIZE];
+    mdns_record_t srv{};
+    srv.name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    srv.type = MDNS_RECORDTYPE_SRV;
+    srv.data.srv.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+    srv.data.srv.port = adv_port_;
+    srv.data.srv.priority = 0;
+    srv.data.srv.weight = 0;
 
-    const bool want_unicast = (qclass & MDNS_UNICAST_RESPONSE) != 0;
-    const uint16_t qclass_no_flush = (uint16_t)(qclass & ~MDNS_CACHE_FLUSH);
+    // TXT (two keys like mdns.c style; library coalesces)
+    mdns_record_t txt_rec[2]{};
+    txt_rec[0].name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    txt_rec[0].type = MDNS_RECORDTYPE_TXT;
+    txt_rec[0].data.txt.key = mdns_string_t{ "node_id", 7 };
+    txt_rec[0].data.txt.value = mdns_string_t{ adv_node_id_.c_str(), adv_node_id_.size() };
 
-    // Only answer IN/ANY
-    if (!(qclass_no_flush == MDNS_CLASS_IN || qclass_no_flush == MDNS_CLASS_ANY)) return;
+    txt_rec[1].name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    txt_rec[1].type = MDNS_RECORDTYPE_TXT;
+    txt_rec[1].data.txt.key = mdns_string_t{ "payload", 7 };
+    txt_rec[1].data.txt.value = mdns_string_t{ adv_payload_json_.c_str(), adv_payload_json_.size() };
 
-    auto send_answer = [&](mdns_record_t answer, mdns_record_t* additional, size_t add_count) {
-      if (want_unicast) {
-        mdns_query_answer_unicast(sock, from, addrlen, sendbuf, sizeof(sendbuf),
-                                  /*query_id*/0,
-                                  (mdns_record_type_t)qtype,
+    // A/AAAA records: one per IP
+    mdns_record_t additional[32]{};
+    size_t add_count = 0;
+
+    // Always include SRV and TXT in additional (helps scanners)
+    additional[add_count++] = srv;
+    additional[add_count++] = txt_rec[0];
+    additional[add_count++] = txt_rec[1];
+
+    // Add A/AAAA for host_qualified
+    for (auto const& ip : adv_ips_) {
+      if (add_count >= (sizeof(additional)/sizeof(additional[0]))) break;
+
+      sockaddr_in a4{};
+      sockaddr_in6 a6{};
+      if (inet_pton(AF_INET, ip.c_str(), &a4.sin_addr) == 1) {
+        a4.sin_family = AF_INET;
+        mdns_record_t rec{};
+        rec.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+        rec.type = MDNS_RECORDTYPE_A;
+        rec.data.a.addr = a4;
+        additional[add_count++] = rec;
+      } else if (inet_pton(AF_INET6, ip.c_str(), &a6.sin6_addr) == 1) {
+        a6.sin6_family = AF_INET6;
+        mdns_record_t rec{};
+        rec.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+        rec.type = MDNS_RECORDTYPE_AAAA;
+        rec.data.aaaa.addr = a6;
+        additional[add_count++] = rec;
+      }
+    }
+
+    // Decide what to answer based on qname/rtype (mdns.c logic)
+    const bool q_is_service = (ends_with_case_insensitive(qn, service_type_) &&
+                               ends_with_case_insensitive(service_type_, ".local."));
+    const bool q_is_instance = ends_with_case_insensitive(qn, service_type_);
+
+    // If question is PTR for our service type -> answer PTR + additional SRV/TXT/A/AAAA
+    if ((rtype == MDNS_RECORDTYPE_PTR || rtype == MDNS_RECORDTYPE_ANY) &&
+        ends_with_case_insensitive(qn, service_type_)) {
+
+      if (unicast) {
+        mdns_query_answer_unicast(sock, from, addrlen, sendbuf_, sizeof(sendbuf_),
+                                  0 /*query_id*/, (mdns_record_type_t)rtype,
                                   qname.str, qname.length,
-                                  answer,
-                                  nullptr, 0,
-                                  additional, add_count);
+                                  ptr, nullptr, 0, additional, add_count);
       } else {
-        mdns_query_answer_multicast(sock, sendbuf, sizeof(sendbuf),
-                                    answer,
-                                    nullptr, 0,
-                                    additional, add_count);
-      }
-    };
-
-    // service_type question?
-    if (ends_with_case_insensitive(asked, service_type_)) {
-      if (qtype == MDNS_RECORDTYPE_PTR || qtype == MDNS_RECORDTYPE_ANY) {
-        mdns_record_t additional[6] = {};
-        size_t add_count = 0;
-        additional[add_count++] = srv;
-        additional[add_count++] = txt_node_id;
-        additional[add_count++] = txt_proto;
-        additional[add_count++] = txt_payload;
-
-        send_answer(ptr, additional, add_count);
+        mdns_query_answer_multicast(sock, sendbuf_, sizeof(sendbuf_),
+                                    ptr, nullptr, 0, additional, add_count);
       }
       return;
     }
 
-    // instance question?
-    if (ends_with_case_insensitive(asked, service_type_) &&
-        asked == adv_instance_name_) {
-      if (qtype == MDNS_RECORDTYPE_SRV || qtype == MDNS_RECORDTYPE_ANY) {
-        mdns_record_t additional[6] = {};
-        size_t add_count = 0;
-        additional[add_count++] = txt_node_id;
-        additional[add_count++] = txt_proto;
-        additional[add_count++] = txt_payload;
-
-        send_answer(srv, additional, add_count);
-      } else if (qtype == MDNS_RECORDTYPE_TXT) {
-        // TXT is coalesced by library when we send it as "additional"
-        mdns_record_t additional[6] = {};
-        size_t add_count = 0;
-        additional[add_count++] = txt_node_id;
-        additional[add_count++] = txt_proto;
-        additional[add_count++] = txt_payload;
-
-        // For TXT query, send SRV as answer is not correct; so we send PTR as a harmless answer? better:
-        // send SRV as "answer" only for SRV/ANY, otherwise let it be.
-        // Here we multicast announce-like additional as answer: use PTR as dummy? No.
-        // Simplest: do nothing; client will still get TXT from earlier SRV query.
+    // SRV/TXT question for our instance
+    if (q_is_instance && (to_lower(qn) == to_lower(adv_instance_))) {
+      if ((rtype == MDNS_RECORDTYPE_SRV || rtype == MDNS_RECORDTYPE_ANY)) {
+        mdns_record_t answer = srv;
+        if (unicast) {
+          mdns_query_answer_unicast(sock, from, addrlen, sendbuf_, sizeof(sendbuf_),
+                                    0, (mdns_record_type_t)rtype,
+                                    qname.str, qname.length,
+                                    answer, nullptr, 0, additional, add_count);
+        } else {
+          mdns_query_answer_multicast(sock, sendbuf_, sizeof(sendbuf_),
+                                      answer, nullptr, 0, additional, add_count);
+        }
+        return;
       }
-      return;
+
+      if ((rtype == MDNS_RECORDTYPE_TXT || rtype == MDNS_RECORDTYPE_ANY)) {
+        // TXT is in additional already; answer with SRV or PTR is enough,
+        // but if explicitly asked TXT, we can answer with one TXT record and additional.
+        mdns_record_t answer = txt_rec[0]; // library will coalesce with txt_rec[1] if both in additional
+        if (unicast) {
+          mdns_query_answer_unicast(sock, from, addrlen, sendbuf_, sizeof(sendbuf_),
+                                    0, (mdns_record_type_t)rtype,
+                                    qname.str, qname.length,
+                                    answer, nullptr, 0, additional, add_count);
+        } else {
+          mdns_query_answer_multicast(sock, sendbuf_, sizeof(sendbuf_),
+                                      answer, nullptr, 0, additional, add_count);
+        }
+        return;
+      }
     }
 
-    // host question (A/AAAA)
-    if (asked == adv_host_qualified_) {
-      // We keep this simple: most clients get IP via additional A/AAAA from other stacks anyway,
-      // but cpp<->cpp relies on us answering something. We’ll answer with local addresses by querying OS.
-      // For now, answer nothing here (still works via SRV->connect using instance host?).
-      // If you want, we can add full local interface IP enumeration and send A/AAAA records too.
-      return;
+    // A/AAAA question for our host_qualified
+    if (to_lower(ensure_trailing_dot(qn)) == to_lower(adv_host_qualified_)) {
+      // Find first matching record type in additional and answer it (plus additional)
+      for (size_t i = 0; i < add_count; ++i) {
+        if ((rtype == MDNS_RECORDTYPE_A && additional[i].type == MDNS_RECORDTYPE_A) ||
+            (rtype == MDNS_RECORDTYPE_AAAA && additional[i].type == MDNS_RECORDTYPE_AAAA) ||
+            (rtype == MDNS_RECORDTYPE_ANY)) {
+
+          mdns_record_t answer = additional[i];
+          if (unicast) {
+            mdns_query_answer_unicast(sock, from, addrlen, sendbuf_, sizeof(sendbuf_),
+                                      0, (mdns_record_type_t)rtype,
+                                      qname.str, qname.length,
+                                      answer, nullptr, 0, additional, add_count);
+          } else {
+            mdns_query_answer_multicast(sock, sendbuf_, sizeof(sendbuf_),
+                                        answer, nullptr, 0, additional, add_count);
+          }
+          return;
+        }
+      }
     }
   }
 
-  // ---------------
-  // Thread main
-  // ---------------
 
-  void thread_main() {
-    close_sockets_();
+    // ---- client side: parse ANSWERS/AUTHORITY/ADDITIONAL ----
+    void handle_record(int sock,
+                      const struct sockaddr* from,
+                      size_t addrlen,
+                      mdns_entry_type_t entry,
+                      uint16_t rtype,
+                      uint16_t rclass,
+                      uint32_t ttl,
+                      const void* data,
+                      size_t size,
+                      size_t name_offset,
+                      size_t record_offset,
+                      size_t record_length) {
+      (void)rclass;
 
-    // Open service sockets on 5353 (critical)
-    if (open_service_sockets_ipv4_ipv6_() <= 0) {
-      Logger::error("[ZconfDiscovery] Failed to open service sockets on 5353");
-      return;
-    }
-
-    // Open client sockets per interface (ephemeral)
-    open_client_sockets_per_interface_(0);
-
-    Logger::debug("[ZconfDiscovery] service sockets=" + std::to_string(service_socket_count_) +
-                  " client sockets=" + std::to_string(client_socket_count_));
-
-    uint8_t buffer[BUFFER_SIZE];
-
-    uint64_t last_query_ms = 0;
-    const uint64_t query_interval_ms = 2000; // like your python browser feel
-    const uint64_t cleanup_interval_ms = 2000;
-    uint64_t last_cleanup_ms = 0;
-
-    while (!closing_.load()) {
-      const uint64_t tnow = now_ms();
-
-      // Periodic query (PTR for our service_type) from all client sockets
-      if (client_socket_count_ > 0 && (tnow - last_query_ms) >= query_interval_ms) {
-        for (int i = 0; i < client_socket_count_; ++i) {
-          // Query for PTR on service_type
-          mdns_query_send(client_sockets_[i],
-                          MDNS_RECORDTYPE_PTR,
-                          service_type_.c_str(),
-                          service_type_.size(),
-                          buffer,
-                          sizeof(buffer),
-                          0);
-        }
-        last_query_ms = tnow;
+      // Service side: answer QUESTIONS
+      if (entry == MDNS_ENTRYTYPE_QUESTION) {
+        // (Optional) add debug in handle_question_ instead if you prefer.
+        handle_question_(sock, from, addrlen, rtype, rclass, ttl, data, size, name_offset);
+        return;
       }
 
-      // select() over all sockets
+      // Client side: parse ANSWER/AUTHORITY/ADDITIONAL
+      if (entry != MDNS_ENTRYTYPE_ANSWER &&
+          entry != MDNS_ENTRYTYPE_AUTHORITY &&
+          entry != MDNS_ENTRYTYPE_ADDITIONAL)
+        return;
+
+      // Extract owner/record name
+      char namebuf[256] = {0};
+      size_t nofs = name_offset;
+      mdns_string_t owner = mdns_string_extract(data, size, &nofs, namebuf, sizeof(namebuf));
+      if (!owner.str || !owner.length) return;
+
+      const std::string owner_name(owner.str, owner.length);
+
+      const uint64_t now = now_ms();
+      const uint64_t expire_ms = (ttl == 0) ? 0 : (now + (uint64_t)ttl * 1000ULL);
+
+      if (rtype == MDNS_RECORDTYPE_PTR) {
+        // PTR: service_type -> instance
+        char instbuf[256] = {0};
+        mdns_string_t inst = mdns_record_parse_ptr(data, size, record_offset, record_length,
+                                                  instbuf, sizeof(instbuf));
+        if (!inst.str || !inst.length) return;
+
+        const std::string instance(inst.str, inst.length);
+
+        if (!ends_with_case_insensitive(owner_name, service_type_)) {
+          Logger::debug("ZconfDiscovery: IGNORE PTR (owner not service) owner='{}'", owner_name);
+          return;
+        }
+        if (!ends_with_case_insensitive(instance, service_type_)) {
+          Logger::debug("ZconfDiscovery: IGNORE PTR (instance not service) instance='{}'", instance);
+          return;
+        }
+
+        std::string node_id = node_id_from_instance(instance);
+        if (node_id.empty()) {
+          Logger::debug("ZconfDiscovery: IGNORE PTR (empty node_id) instance='{}'", instance);
+          return;
+        }
+
+        Logger::debug(
+          "ZconfDiscovery: PTR owner='{}' instance='{}' -> node_id='{}'",
+          owner_name, instance, node_id
+        );
+
+        std::lock_guard<std::mutex> lk(mtx_);
+
+        if (ttl == 0) {
+          Logger::debug("ZconfDiscovery: PTR goodbye -> erase node_id='{}' instance='{}'", node_id, instance);
+          nodes_.erase(node_id);
+          instance_to_node_.erase(instance);
+          expire_ms_by_node_.erase(node_id);
+          cv_.notify_all();
+          return;
+        }
+
+        NodeInfo& ni = nodes_[node_id];
+        ni.node_id = node_id;
+        ni.instance_name = instance;
+
+        instance_to_node_[instance] = node_id;
+        expire_ms_by_node_[node_id] = expire_ms;
+        cv_.notify_all();
+
+        // allow refresh logic to query it soon
+        queried_instance_.erase(instance);
+        return;
+      }
+
+      if (rtype == MDNS_RECORDTYPE_SRV) {
+        // SRV: instance -> host_qualified + port
+        char hostbuf[256] = {0};
+        mdns_record_srv_t srv = mdns_record_parse_srv(data, size, record_offset, record_length,
+                                                      hostbuf, sizeof(hostbuf));
+        if (!srv.name.str || !srv.name.length) return;
+
+        const std::string instance = ensure_trailing_dot(owner_name);
+        if (!ends_with_case_insensitive(instance, service_type_)) {
+          Logger::debug("ZconfDiscovery: IGNORE SRV (instance not service) instance='{}'", instance);
+          return;
+        }
+
+        const std::string host_str(srv.name.str, srv.name.length);
+
+        Logger::debug(
+          "ZconfDiscovery: SRV owner(instance)='{}' host='{}' port={}",
+          owner_name, host_str, (int)srv.port
+        );
+
+        std::string node_id;
+        {
+          std::lock_guard<std::mutex> lk(mtx_);
+          auto it = instance_to_node_.find(instance);
+          node_id = (it != instance_to_node_.end()) ? it->second : node_id_from_instance(instance);
+
+          if (node_id.empty()) {
+            Logger::debug("ZconfDiscovery: IGNORE SRV (empty node_id) instance='{}'", instance);
+            return;
+          }
+
+          if (ttl == 0) {
+            Logger::debug("ZconfDiscovery: SRV goodbye -> erase node_id='{}' instance='{}' host='{}'",
+                          node_id, instance, host_str);
+            nodes_.erase(node_id);
+            instance_to_node_.erase(instance);
+            expire_ms_by_node_.erase(node_id);
+            cv_.notify_all();
+            return;
+          }
+
+          NodeInfo& ni = nodes_[node_id];
+          ni.node_id = node_id;
+          ni.instance_name = instance;
+          ni.host_qualified = host_str;
+          ni.port = (uint16_t)srv.port;
+
+          std::string host_norm = norm_host(ni.host_qualified);
+          host_to_node_[host_norm] = node_id;
+
+          Logger::debug(
+            "ZconfDiscovery: SRV map host_norm='{}' -> node_id='{}' (node_id_from_instance='{}')",
+            host_norm, node_id, node_id_from_instance(instance)
+          );
+
+          // Apply pending IPs already seen for that host
+          auto pit = pending_ips_by_host_.find(host_norm);
+          if (pit != pending_ips_by_host_.end()) {
+            Logger::debug(
+              "ZconfDiscovery: SRV apply pending IPs host_norm='{}' count={}",
+              host_norm, (int)pit->second.size()
+            );
+            for (auto& ip : pit->second) {
+              if (std::find(ni.ips.begin(), ni.ips.end(), ip) == ni.ips.end())
+                ni.ips.push_back(ip);
+            }
+            pending_ips_by_host_.erase(pit);
+          }
+
+          expire_ms_by_node_[node_id] = expire_ms;
+          cv_.notify_all();
+        }
+
+        // allow refresh logic to query it soon
+        queried_host_.erase(norm_host(host_str));
+        return;
+      }
+
+      if (rtype == MDNS_RECORDTYPE_TXT) {
+        // TXT: instance -> key/value pairs; use node_id + payload
+        mdns_record_txt_t txt[16];
+        size_t parsed = mdns_record_parse_txt(data, size, record_offset, record_length,
+                                              txt, sizeof(txt)/sizeof(txt[0]));
+
+        const std::string instance = ensure_trailing_dot(owner_name);
+        if (!ends_with_case_insensitive(instance, service_type_)) {
+          Logger::debug("ZconfDiscovery: IGNORE TXT (instance not service) instance='{}'", instance);
+          return;
+        }
+
+        Logger::debug(
+          "ZconfDiscovery: TXT owner(instance)='{}' parsed_kv={}",
+          owner_name, (int)parsed
+        );
+
+        // Start with canonical node id from instance (lowercase)
+        std::string node_id = node_id_from_instance(instance);
+        std::string payload = "{}";
+
+        // If TXT provides node_id, it might be uppercase -> MUST canonicalize to match PTR/SRV/A keys
+        std::string txt_node_id_raw;
+
+        for (size_t i = 0; i < parsed; ++i) {
+          std::string key(txt[i].key.str ? txt[i].key.str : "", txt[i].key.length);
+          std::string val(txt[i].value.str ? txt[i].value.str : "", txt[i].value.length);
+
+          Logger::debug("ZconfDiscovery: TXT kv key='{}' val_len={}", key, (int)val.size());
+
+          if (key == "node_id" && !val.empty()) txt_node_id_raw = val;
+          if (key == "payload" && !val.empty()) payload = val;
+        }
+
+        if (!txt_node_id_raw.empty()) {
+          // IMPORTANT FIX: keep the same canonical node_id key used elsewhere (lowercase)
+          Logger::debug("ZconfDiscovery: TXT node_id raw='{}' -> canonical='{}'",
+                        txt_node_id_raw, to_lower(txt_node_id_raw));
+          node_id = to_lower(txt_node_id_raw);
+        }
+
+        if (node_id.empty()) {
+          Logger::debug("ZconfDiscovery: IGNORE TXT (empty node_id) instance='{}'", instance);
+          return;
+        }
+
+        Logger::debug(
+          "ZconfDiscovery: TXT resolved instance='{}' -> node_id='{}' payload_len={}",
+          instance, node_id, (int)payload.size()
+        );
+
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (ttl == 0) {
+          Logger::debug("ZconfDiscovery: TXT goodbye -> erase node_id='{}' instance='{}'", node_id, instance);
+          nodes_.erase(node_id);
+          instance_to_node_.erase(instance);
+          expire_ms_by_node_.erase(node_id);
+          cv_.notify_all();
+          return;
+        }
+
+        NodeInfo& ni = nodes_[node_id];
+        ni.node_id = node_id;
+        ni.instance_name = instance;
+        ni.payload_json = payload;
+
+        expire_ms_by_node_[node_id] = expire_ms;
+        cv_.notify_all();
+        return;
+      }
+
+      if (rtype == MDNS_RECORDTYPE_A) {
+        Logger::debug("ZconfDiscovery: HIT A owner='{}'", owner_name);
+
+        // A: host_qualified -> IPv4
+        sockaddr_in addr{};
+        mdns_record_parse_a(data, size, record_offset, record_length, &addr);
+        std::string ip = ipv4_to_string(addr);
+        if (ip.empty()) return;
+
+        const std::string host_norm = norm_host(owner_name);
+
+        std::lock_guard<std::mutex> lk(mtx_);
+
+        auto itNode = host_to_node_.find(host_norm);
+        if (itNode == host_to_node_.end()) {
+          Logger::debug(
+            "ZconfDiscovery: A host not mapped yet host_norm='{}' caching ip='{}' pending_hosts={}",
+            host_norm, ip, (int)pending_ips_by_host_.size()
+          );
+          auto& v = pending_ips_by_host_[host_norm];
+          if (std::find(v.begin(), v.end(), ip) == v.end()) v.push_back(ip);
+          return;
+        }
+
+        const std::string& node_id = itNode->second;
+        auto it = nodes_.find(node_id);
+        if (it == nodes_.end()) return;
+
+        auto& ips = it->second.ips;
+        if (ttl == 0) {
+          Logger::debug("ZconfDiscovery: A goodbye node_id='{}' ip='{}'", node_id, ip);
+          ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
+        } else {
+          if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
+          expire_ms_by_node_[node_id] = expire_ms;
+          Logger::debug("ZconfDiscovery: A add node_id='{}' ip='{}' total_ips={}", node_id, ip, (int)ips.size());
+        }
+        cv_.notify_all();
+        return;
+      }
+
+      if (rtype == MDNS_RECORDTYPE_AAAA) {
+        Logger::debug("ZconfDiscovery: HIT AAAA owner='{}'", owner_name);
+
+        // AAAA: host_qualified -> IPv6
+        sockaddr_in6 addr6{};
+        mdns_record_parse_aaaa(data, size, record_offset, record_length, &addr6);
+        std::string ip = ipv6_to_string(addr6);
+        if (ip.empty()) return;
+
+        const std::string host_norm = norm_host(owner_name);
+
+        std::lock_guard<std::mutex> lk(mtx_);
+
+        auto itNode = host_to_node_.find(host_norm);
+        if (itNode == host_to_node_.end()) {
+          Logger::debug(
+            "ZconfDiscovery: AAAA host not mapped yet host_norm='{}' caching ip='{}' pending_hosts={}",
+            host_norm, ip, (int)pending_ips_by_host_.size()
+          );
+          auto& v = pending_ips_by_host_[host_norm];
+          if (std::find(v.begin(), v.end(), ip) == v.end()) v.push_back(ip);
+          return;
+        }
+
+        const std::string& node_id = itNode->second;
+        auto it = nodes_.find(node_id);
+        if (it == nodes_.end()) return;
+
+        auto& ips = it->second.ips;
+        if (ttl == 0) {
+          Logger::debug("ZconfDiscovery: AAAA goodbye node_id='{}' ip='{}'", node_id, ip);
+          ips.erase(std::remove(ips.begin(), ips.end(), ip), ips.end());
+        } else {
+          if (std::find(ips.begin(), ips.end(), ip) == ips.end()) ips.push_back(ip);
+          expire_ms_by_node_[node_id] = expire_ms;
+          Logger::debug("ZconfDiscovery: AAAA add node_id='{}' ip='{}' total_ips={}", node_id, ip, (int)ips.size());
+        }
+        cv_.notify_all();
+        return;
+      }
+
+      Logger::debug(
+        "ZconfDiscovery: UNHANDLED rtype={} owner='{}' entry={}",
+        (int)rtype, owner_name, (int)entry
+      );
+    }
+
+
+  // ---- send announce/goodbye (optional but good) ----
+  void send_announce_locked_() {
+    if (!advertising_) return;
+
+    mdns_record_t ptr{};
+    ptr.name = mdns_string_t{ service_type_.c_str(), service_type_.size() };
+    ptr.type = MDNS_RECORDTYPE_PTR;
+    ptr.data.ptr.name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+
+    mdns_record_t srv{};
+    srv.name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    srv.type = MDNS_RECORDTYPE_SRV;
+    srv.data.srv.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+    srv.data.srv.port = adv_port_;
+    srv.data.srv.priority = 0;
+    srv.data.srv.weight = 0;
+
+    mdns_record_t txt_rec[2]{};
+    txt_rec[0].name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    txt_rec[0].type = MDNS_RECORDTYPE_TXT;
+    txt_rec[0].data.txt.key = mdns_string_t{ "node_id", 7 };
+    txt_rec[0].data.txt.value = mdns_string_t{ adv_node_id_.c_str(), adv_node_id_.size() };
+
+    txt_rec[1].name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+    txt_rec[1].type = MDNS_RECORDTYPE_TXT;
+    txt_rec[1].data.txt.key = mdns_string_t{ "payload", 7 };
+    txt_rec[1].data.txt.value = mdns_string_t{ adv_payload_json_.c_str(), adv_payload_json_.size() };
+
+    mdns_record_t additional[32]{};
+    size_t add_count = 0;
+    additional[add_count++] = srv;
+    additional[add_count++] = txt_rec[0];
+    additional[add_count++] = txt_rec[1];
+
+    for (auto const& ip : adv_ips_) {
+      if (add_count >= (sizeof(additional)/sizeof(additional[0]))) break;
+
+      sockaddr_in a4{};
+      sockaddr_in6 a6{};
+      if (inet_pton(AF_INET, ip.c_str(), &a4.sin_addr) == 1) {
+        a4.sin_family = AF_INET;
+        mdns_record_t rec{};
+        rec.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+        rec.type = MDNS_RECORDTYPE_A;
+        rec.data.a.addr = a4;
+        additional[add_count++] = rec;
+      } else if (inet_pton(AF_INET6, ip.c_str(), &a6.sin6_addr) == 1) {
+        a6.sin6_family = AF_INET6;
+        mdns_record_t rec{};
+        rec.name = mdns_string_t{ adv_host_qualified_.c_str(), adv_host_qualified_.size() };
+        rec.type = MDNS_RECORDTYPE_AAAA;
+        rec.data.aaaa.addr = a6;
+        additional[add_count++] = rec;
+      }
+    }
+
+    for (int i = 0; i < n_service_; ++i) {
+      mdns_announce_multicast(service_socks_[i], sendbuf_, sizeof(sendbuf_),
+                              ptr, nullptr, 0, additional, add_count);
+    }
+  }
+
+  void send_goodbye_locked_() {
+    if (!advertising_) return;
+
+    mdns_record_t ptr{};
+    ptr.name = mdns_string_t{ service_type_.c_str(), service_type_.size() };
+    ptr.type = MDNS_RECORDTYPE_PTR;
+    ptr.data.ptr.name = mdns_string_t{ adv_instance_.c_str(), adv_instance_.size() };
+
+    mdns_record_t additional[1]{};
+    size_t add_count = 0;
+    // (goodbye can include extra records too, but PTR with ttl=0 is the important part)
+
+    for (int i = 0; i < n_service_; ++i) {
+      mdns_goodbye_multicast(service_socks_[i], sendbuf_, sizeof(sendbuf_),
+                             ptr, nullptr, 0, additional, add_count);
+    }
+  }
+
+  void send_goodbye_if_needed_() {
+    std::lock_guard<std::mutex> lk(adv_mtx_);
+    if (advertising_) send_goodbye_locked_();
+  }
+
+  // ---- query senders ----
+  void send_ptr_query_all_() {
+    for (int i = 0; i < n_client_; ++i) {
+      mdns_query_send(client_socks_[i], MDNS_RECORDTYPE_PTR,
+                      service_type_.c_str(), service_type_.size(),
+                      sendbuf_, sizeof(sendbuf_), 0);
+    }
+  }
+
+  void send_instance_queries_(const std::string& instance) {
+    // Ask SRV + TXT for instance
+    mdns_query_t q[2];
+    q[0].type = MDNS_RECORDTYPE_SRV; q[0].name = instance.c_str(); q[0].length = instance.size();
+    q[1].type = MDNS_RECORDTYPE_TXT; q[1].name = instance.c_str(); q[1].length = instance.size();
+    for (int i = 0; i < n_client_; ++i) {
+      mdns_multiquery_send(client_socks_[i], q, 2, sendbuf_, sizeof(sendbuf_), 0);
+    }
+  }
+
+  void send_host_queries_(const std::string& hostq) {
+    // Ask A + AAAA for host
+    mdns_query_t q[2];
+    q[0].type = MDNS_RECORDTYPE_A;    q[0].name = hostq.c_str(); q[0].length = hostq.size();
+    q[1].type = MDNS_RECORDTYPE_AAAA; q[1].name = hostq.c_str(); q[1].length = hostq.size();
+    for (int i = 0; i < n_client_; ++i) {
+      mdns_multiquery_send(client_socks_[i], q, 2, sendbuf_, sizeof(sendbuf_), 0);
+    }
+  }
+
+  // ---- main loop ----
+  void thread_main() {
+    // sockets: service (listen on 5353) + client (ephemeral per interface)
+    n_service_ = open_service_sockets(service_socks_, MAX_SOCKETS);
+    n_client_  = open_client_sockets(client_socks_, MAX_SOCKETS, 0);
+
+    Logger::debug("[ZconfDiscovery] service sockets=" + std::to_string(n_service_) +
+                  " client sockets=" + std::to_string(n_client_));
+
+    last_ptr_query_ms_ = 0;
+    last_refresh_ms_ = 0;
+
+    while (!closing_) {
+      // Periodic PTR discovery
+      const uint64_t t = now_ms();
+      if (t - last_ptr_query_ms_ > 1500) {
+        send_ptr_query_all_();
+        last_ptr_query_ms_ = t;
+      }
+
+      // Follow-up queries: any new instances? any hosts?
+      if (t - last_refresh_ms_ > 500) {
+        std::vector<std::string> instances;
+        std::vector<std::string> hosts;
+
+        {
+          std::lock_guard<std::mutex> lk(mtx_);
+          for (auto const& kv : nodes_) {
+            if (!kv.second.instance_name.empty()) {
+              instances.push_back(ensure_trailing_dot(kv.second.instance_name));
+            }
+            if (!kv.second.host_qualified.empty()) {
+              hosts.push_back(ensure_trailing_dot(kv.second.host_qualified));
+            }
+          }
+        }
+
+        for (auto& inst : instances) {
+          if (queried_instance_.insert(inst).second) {
+            send_instance_queries_(inst);
+          }
+        }
+        for (auto& h : hosts) {
+          const std::string hn = norm_host(h);
+          if (queried_host_.insert(hn).second) {
+            send_host_queries_(ensure_trailing_dot(h));
+          }
+        }
+
+        last_refresh_ms_ = t;
+      }
+
+      // Announce occasionally (not required if answering QUESTIONS, but helps)
+      {
+        std::lock_guard<std::mutex> lk(adv_mtx_);
+        static uint64_t last_announce = 0;
+        if (advertising_ && (t - last_announce > 2000)) {
+          send_announce_locked_();
+          last_announce = t;
+        }
+      }
+
+      // select() on all sockets (service + client) like mdns.c
       fd_set readfs;
       FD_ZERO(&readfs);
       int nfds = 0;
 
-      for (int i = 0; i < service_socket_count_; ++i) {
-        int s = service_sockets_[i];
-        if (s >= 0) {
-          FD_SET(s, &readfs);
-          nfds = std::max(nfds, s + 1);
-        }
+      for (int i = 0; i < n_service_; ++i) {
+        FD_SET(service_socks_[i], &readfs);
+        nfds = std::max(nfds, service_socks_[i] + 1);
       }
-      for (int i = 0; i < client_socket_count_; ++i) {
-        int s = client_sockets_[i];
-        if (s >= 0) {
-          FD_SET(s, &readfs);
-          nfds = std::max(nfds, s + 1);
-        }
+      for (int i = 0; i < n_client_; ++i) {
+        FD_SET(client_socks_[i], &readfs);
+        nfds = std::max(nfds, client_socks_[i] + 1);
       }
 
-      timeval tv{};
+      timeval tv;
       tv.tv_sec = 0;
-      tv.tv_usec = 100000; // 100ms like mdns.c
+      tv.tv_usec = 100000; // 100ms
 
-      int res = select(nfds, &readfs, nullptr, nullptr, &tv);
-      if (res > 0) {
-        // Service sockets: listen questions (and also parse answers if any)
-        for (int i = 0; i < service_socket_count_; ++i) {
-          int s = service_sockets_[i];
-          if (s >= 0 && FD_ISSET(s, &readfs)) {
-            mdns_socket_listen(s, buffer, sizeof(buffer), &Impl::mdns_callback, this);
+      const int r = select(nfds, &readfs, nullptr, nullptr, &tv);
+      if (r > 0) {
+        for (int i = 0; i < n_service_; ++i) {
+          if (FD_ISSET(service_socks_[i], &readfs)) {
+            mdns_socket_listen(service_socks_[i], recvbuf_, sizeof(recvbuf_), &Impl::mdns_callback, this);
           }
         }
-        // Client sockets: parse query responses
-        for (int i = 0; i < client_socket_count_; ++i) {
-          int s = client_sockets_[i];
-          if (s >= 0 && FD_ISSET(s, &readfs)) {
-            mdns_query_recv(s, buffer, sizeof(buffer), &Impl::mdns_callback, this, 0);
+        for (int i = 0; i < n_client_; ++i) {
+          if (FD_ISSET(client_socks_[i], &readfs)) {
+            // Parse all replies (no query_id filtering, like mdns.c can do)
+            mdns_query_recv(client_socks_[i], recvbuf_, sizeof(recvbuf_), &Impl::mdns_callback, this, 0);
           }
         }
       }
-
-      // Periodic cleanup of expired nodes
-      if ((tnow - last_cleanup_ms) >= cleanup_interval_ms) {
-        cleanup_expired_(tnow);
-        last_cleanup_ms = tnow;
-      }
     }
   }
-
-  void cleanup_expired_(uint64_t tnow) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    std::vector<std::string> to_remove;
-    for (const auto& kv : second_expire_ms_) {
-      if (kv.second != 0 && kv.second < tnow) to_remove.push_back(kv.first);
-    }
-    for (const auto& node_id : to_remove) {
-      auto it = nodes_.find(node_id);
-      if (it != nodes_.end()) {
-        instance_to_node_.erase(it->second.instance_name);
-        host_to_node_.erase(it->second.host_qualified);
-        nodes_.erase(it);
-      }
-      second_expire_ms_.erase(node_id);
-    }
-    if (!to_remove.empty()) cv_.notify_all();
-  }
-
-  // -------------------------
-  // State
-  // -------------------------
-  std::string service_type_;
-
-  std::atomic<bool> running_{false};
-  std::atomic<bool> closing_{false};
-  std::thread worker_;
-
-  // Sockets
-  int service_sockets_[MAX_SOCKETS]{};
-  int service_socket_count_ = 0;
-
-  int client_sockets_[MAX_SOCKETS]{};
-  int client_socket_count_ = 0;
-
-  // Advertising state
-  mutable std::mutex adv_mtx_;
-  bool advertising_ = false;
-  std::string adv_node_id_;
-  std::uint16_t adv_port_ = 0;
-  std::string adv_payload_json_ = "{}";
-  std::string adv_hostname_;
-  std::string adv_host_qualified_;
-  std::string adv_instance_name_;
-
-  // Node map
-  mutable std::mutex mtx_;
-  mutable std::condition_variable cv_;
-  mutable std::unordered_map<std::string, NodeInfo> nodes_; // node_id -> NodeInfo
-  // TTL expiry per node (ms since steady epoch)
-  mutable std::unordered_map<std::string, uint64_t> second_expire_ms_;
-
-  // Helper mappings while resolving PTR->SRV->A/TXT
-  mutable std::unordered_map<std::string, std::string> instance_to_node_; // instance -> node_id
-  mutable std::unordered_map<std::string, std::string> host_to_node_;     // host -> node_id
-
-  std::unordered_map<std::string, std::vector<std::string>> pending_ips_by_host_;
-
 };
 
-// -------------------------
-// Public wrapper
-// -------------------------
+// ---- ZconfDiscovery wrapper ----
 
 ZconfDiscovery::ZconfDiscovery(std::string service_type)
   : impl_(new Impl(std::move(service_type))) {}
 
-ZconfDiscovery::~ZconfDiscovery() = default;
+ZconfDiscovery::~ZconfDiscovery() {
+  close();
+}
 
 void ZconfDiscovery::start() { impl_->start(); }
-
-void ZconfDiscovery::close() { impl_->stop(); }
+void ZconfDiscovery::close() { impl_->close(); }
 
 void ZconfDiscovery::advertise(const std::string& node_id,
                                std::uint16_t port,
-                               const std::string& payload_json) {
-  impl_->advertise(node_id, port, payload_json);
+                               const std::string& payload_json,
+                               const std::vector<std::string>& ips) {
+  impl_->advertise(node_id, port, payload_json, ips);
 }
 
 void ZconfDiscovery::stop_advertising() { impl_->stop_advertising(); }
-
-bool ZconfDiscovery::resolve_node(const std::string& node_id,
-                                  NodeInfo& out,
-                                  double timeout_sec) const {
-  return impl_->resolve_node(node_id, out, timeout_sec);
-}
 
 std::vector<ZconfDiscovery::NodeInfo> ZconfDiscovery::list_nodes() const {
   return impl_->list_nodes();
 }
 
+bool ZconfDiscovery::resolve_node(const std::string& node_id, NodeInfo& out, double timeout_sec) const {
+  return impl_->resolve_node(node_id, out, timeout_sec);
+}
+
 std::string ZconfDiscovery::pick_best_ip(const NodeInfo& node) {
-  return Impl::pick_best_ip(node);
+  for (const auto& ip : node.ips) {
+    if (ip.rfind("127.", 0) == 0) continue;
+    if (ip.rfind("169.254.", 0) == 0) continue;
+    return ip;
+  }
+  return node.ips.empty() ? "" : node.ips.front();
 }
 
 } // namespace magpie
-
