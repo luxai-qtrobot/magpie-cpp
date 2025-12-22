@@ -23,7 +23,7 @@ jobs:
             cmake ninja-build pkg-config \
             g++ \
             libzmq3-dev \
-            libmsgpack-dev \ 
+            libmsgpack-dev \
             libfmt-dev
 
       - name: Build & install RobotTestingFramework
