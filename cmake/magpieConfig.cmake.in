@@ -2,9 +2,20 @@
 
 include(CMakeFindDependencyMacro)
 
+cmake_policy(SET CMP0167 NEW)
+
+
 find_dependency(Threads)
 find_dependency(fmt)
-find_dependency(msgpack)
+
+find_package(msgpack-cxx CONFIG QUIET)
+if(NOT msgpack-cxx_FOUND)
+    find_package(msgpackc-cxx CONFIG QUIET)
+endif()
+if(NOT msgpack-cxx_FOUND AND NOT msgpackc-cxx_FOUND)
+    find_package(msgpack CONFIG REQUIRED)  # fallback
+endif()
+
 
 include("${CMAKE_CURRENT_LIST_DIR}/MagpieTargets.cmake")
 
