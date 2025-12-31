@@ -15,9 +15,38 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
 
+cmake_policy(SET CMP0167 NEW)
+
+
 find_package(Threads REQUIRED)
-find_package(msgpack REQUIRED)  # depending on your FindMsgpack or pkg-config setup
 find_package(fmt REQUIRED)
+
+# find_package(msgpack REQUIRED)  # depending on your FindMsgpack or pkg-config setup
+find_package(msgpack-cxx CONFIG QUIET)
+if(NOT msgpack-cxx_FOUND)
+    find_package(msgpackc-cxx CONFIG QUIET)
+endif()
+if(NOT msgpack-cxx_FOUND AND NOT msgpackc-cxx_FOUND)
+    find_package(msgpack CONFIG REQUIRED)  # fallback
+endif()
+
+# Pick the actual CMake target name exported by the found package.
+set(MAGPIE_MSGPACK_TARGET "")
+
+if(TARGET msgpack-cxx)
+    set(MAGPIE_MSGPACK_TARGET msgpack-cxx)
+elseif(TARGET msgpackc-cxx)
+    set(MAGPIE_MSGPACK_TARGET msgpackc-cxx)
+elseif(TARGET msgpackc)
+    set(MAGPIE_MSGPACK_TARGET msgpackc)
+elseif(TARGET msgpack)
+    set(MAGPIE_MSGPACK_TARGET msgpack)
+else()
+    message(FATAL_ERROR
+        "msgpack found, but no known CMake target exported (tried msgpack-cxx, msgpackc-cxx, msgpackc, msgpack)."
+    )
+endif()
+
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -55,9 +84,9 @@ target_link_libraries(magpie_core
     PUBLIC
         Threads::Threads
         fmt::fmt
-    PRIVATE        
+    PRIVATE
         zmq      # or ZeroMQ::ZeroMQ, depending on your system
-        msgpackc # or msgpackc-cxx / msgpack depending on your distro
+        ${MAGPIE_MSGPACK_TARGET}
 )
 
 target_compile_features(magpie_core PUBLIC cxx_std_14)
@@ -68,6 +97,13 @@ set_target_properties(magpie_core PROPERTIES
     SOVERSION ${PROJECT_VERSION_MAJOR}
     OUTPUT_NAME magpie
 )
+
+# --------------------------------------------------------------------------------------
+# Convenience target for consumers who DON'T want magpie::core
+# --------------------------------------------------------------------------------------
+add_library(magpie INTERFACE)
+target_link_libraries(magpie INTERFACE magpie_core)
+add_library(magpie::magpie ALIAS magpie)
 
 # --------------------------------------------------------------------------------------
 # Optional feature libraries (built as separate shared libs)
@@ -150,7 +186,12 @@ install(TARGETS magpie_core
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT core
 )
 
-# Optional runtime libs -> their own components
+# Export the convenience INTERFACE target too (no files installed, but included in exports)
+install(TARGETS magpie
+    EXPORT MagpieTargets
+    COMPONENT core
+)
+
 if(TARGET magpie_audio)
     install(TARGETS magpie_audio
         EXPORT MagpieTargets
@@ -169,42 +210,33 @@ if(TARGET magpie_video)
     )
 endif()
 
-if(TARGET magpie_discovery)
-    install(TARGETS magpie_discovery
-        EXPORT MagpieTargets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT discovery
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT discovery
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT discovery
-    )
-endif()
-
-# Headers + CMake package files go with core package (minimal change).
+# Headers
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT core)
 
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
-    cmake/MagpieConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/MagpieConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Magpie
+    cmake/magpieConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/magpieConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
 )
 
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/MagpieConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/magpieConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 
 install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/MagpieConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/MagpieConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Magpie
+    ${CMAKE_CURRENT_BINARY_DIR}/magpieConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/magpieConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
     COMPONENT core
 )
 
 install(EXPORT MagpieTargets
     FILE MagpieTargets.cmake
     NAMESPACE magpie::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Magpie
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
     COMPONENT core
 )
 
@@ -245,7 +277,7 @@ set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
 
 # Let dpkg-shlibdeps compute runtime deps automatically (recommended)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS OFF)
+set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS OFF)
 set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS OFF)
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS OFF)
