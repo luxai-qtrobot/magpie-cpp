@@ -180,27 +180,25 @@ static int open_client_sockets(int* socks, int max_socks, int port) {
 }
 
 static int open_service_sockets(int* socks, int max_socks) {
-  // Same idea as mdns.c: one socket per family, bound to MDNS_PORT on INADDR_ANY.
+  // Open one socket per interface, each pinned via IP_ADD_MEMBERSHIP and IP_MULTICAST_IF
+  // to that specific interface. Using INADDR_ANY causes the kernel to join the mDNS
+  // multicast group only on the default-route interface (e.g. WiFi), so eth0 is silently
+  // excluded when WiFi is present. mdns_socket_open_ipv4/6 already handles the per-interface
+  // multicast join and outgoing-interface pin correctly when a real interface address is passed.
+  auto ifs = enumerate_ifaces();
   int n = 0;
-
-  if (n < max_socks) {
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = INADDR_ANY;
-    sa.sin_port = htons((unsigned short)MDNS_PORT);
-    int s = mdns_socket_open_ipv4(&sa);
-    if (s >= 0) socks[n++] = s;
+  for (auto& ia : ifs) {
+    if (n >= max_socks) break;
+    if (!ia.is_v6) {
+      ia.v4.sin_port = htons((unsigned short)MDNS_PORT);
+      int s = mdns_socket_open_ipv4(&ia.v4);
+      if (s >= 0) socks[n++] = s;
+    } else {
+      ia.v6.sin6_port = htons((unsigned short)MDNS_PORT);
+      int s = mdns_socket_open_ipv6(&ia.v6);
+      if (s >= 0) socks[n++] = s;
+    }
   }
-
-  if (n < max_socks) {
-    sockaddr_in6 sa6{};
-    sa6.sin6_family = AF_INET6;
-    sa6.sin6_addr = in6addr_any;
-    sa6.sin6_port = htons((unsigned short)MDNS_PORT);
-    int s = mdns_socket_open_ipv6(&sa6);
-    if (s >= 0) socks[n++] = s;
-  }
-
   return n;
 }
 

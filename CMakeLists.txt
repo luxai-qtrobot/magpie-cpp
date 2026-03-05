@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 project(magpie
-    VERSION 0.6.1
+    VERSION 0.6.2
     LANGUAGES CXX
 )
 
@@ -15,8 +15,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
 
+# Suppress CMP0167 warning from msgpack-cxx's internal find_dependency(Boost)
 cmake_policy(SET CMP0167 NEW)
-
 
 find_package(Threads REQUIRED)
 find_package(fmt REQUIRED)
@@ -93,9 +93,10 @@ target_compile_features(magpie_core PUBLIC cxx_std_14)
 
 # Versioning for shared lib (Debian-friendly)
 set_target_properties(magpie_core PROPERTIES
-    VERSION   ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
+    VERSION     ${PROJECT_VERSION}
+    SOVERSION   ${PROJECT_VERSION_MAJOR}
     OUTPUT_NAME magpie
+    EXPORT_NAME core
 )
 
 # --------------------------------------------------------------------------------------
@@ -127,9 +128,10 @@ if(MAGPIE_WITH_AUDIO)
     target_compile_features(magpie_audio PUBLIC cxx_std_14)
 
     set_target_properties(magpie_audio PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}
+        VERSION     ${PROJECT_VERSION}
+        SOVERSION   ${PROJECT_VERSION_MAJOR}
         OUTPUT_NAME magpie-audio
+        EXPORT_NAME audio
     )
 endif()
 
@@ -153,9 +155,10 @@ if(MAGPIE_WITH_VIDEO)
     target_compile_features(magpie_video PUBLIC cxx_std_14)
 
     set_target_properties(magpie_video PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}
+        VERSION     ${PROJECT_VERSION}
+        SOVERSION   ${PROJECT_VERSION_MAJOR}
         OUTPUT_NAME magpie-video
+        EXPORT_NAME video
     )
 endif()
 
@@ -256,6 +259,28 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "magpie C++ library")
 # Install prefix inside packages (typical Debian)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 
+# Architecture (Debian-compliant)
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+else()
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE ${CMAKE_SYSTEM_PROCESSOR})
+endif()
+
+# Distro version (dynamic: e.g. 22.04 -> release suffix 1deb22.04)
+execute_process(
+    COMMAND lsb_release -rs
+    OUTPUT_VARIABLE LINUX_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(LINUX_VERSION)
+    set(CPACK_DEBIAN_PACKAGE_RELEASE "1deb${LINUX_VERSION}")
+else()
+    set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
+endif()
+
 # Components list (only build the packages that exist)
 set(_magpie_components "core")
 if(TARGET magpie_audio)
@@ -269,23 +294,25 @@ if(TARGET magpie_discovery)
 endif()
 set(CPACK_COMPONENTS_ALL ${_magpie_components})
 
+# Use Debian-standard filename format: <package>_<version>-<release>_<arch>.deb
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
 # Package names per component (the .deb filenames)
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME       "libmagpie")
 set(CPACK_DEBIAN_AUDIO_PACKAGE_NAME      "libmagpie-audio")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_NAME      "libmagpie-video")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
 
-# Let dpkg-shlibdeps compute runtime deps automatically (recommended)
+# Let dpkg-shlibdeps compute runtime deps automatically for all components.
+# For audio/video, also tell shlibdeps where to find libmagpie.so (not system-installed on CI).
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS OFF)
-set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS OFF)
-set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS OFF)
-
-# Ensure optional packages pull in the core package
-# (Version pin is conservative; adjust if you prefer looser deps.)
-set(CPACK_DEBIAN_AUDIO_PACKAGE_DEPENDS     "libmagpie (= ${PROJECT_VERSION})")
-set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (= ${PROJECT_VERSION})")
-set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (= ${PROJECT_VERSION})")
+set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS      ON)
+set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS     ON)
+set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS     ON)
+set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS ON)
+# CMake 3.20+: point shlibdeps at the build tree so it can resolve libmagpie.so
+set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS_PRIVATE_DIRS     "${CMAKE_BINARY_DIR}")
+set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS_PRIVATE_DIRS     "${CMAKE_BINARY_DIR}")
+set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS_PRIVATE_DIRS "${CMAKE_BINARY_DIR}")
 
 include(CPack)

@@ -55,30 +55,6 @@ jobs:
           cd build
           cpack -G DEB
 
-      - name: Rename DEBs to include distro
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd build
-
-          # Determine version string
-          # - Tag builds: v0.5.0 -> 0.5.0
-          # - Manual builds: use "snapshot"
-          ref="${GITHUB_REF_NAME:-snapshot}"
-          if [[ "$ref" == v* ]]; then
-            ver="${ref#v}"
-          else
-            ver="snapshot"
-          fi
-
-          for f in *.deb; do
-            # Example input: magpie-0.5.0-Linux-core.deb
-            base="$(basename "$f")"
-            new="${base/-Linux-/-${{ matrix.distro.name }}-}"
-            # Also normalize prefix to magpie_<ver> style if you prefer; keeping your current prefix
-            mv -v "$f" "$new"
-          done
-
       - name: Upload DEBs as workflow artifacts (always)
         uses: actions/upload-artifact@v4
         with:
