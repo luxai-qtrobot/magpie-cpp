@@ -303,16 +303,18 @@ set(CPACK_DEBIAN_AUDIO_PACKAGE_NAME      "libmagpie-audio")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_NAME      "libmagpie-video")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
 
-# Let dpkg-shlibdeps compute runtime deps automatically for all components.
-# For audio/video, also tell shlibdeps where to find libmagpie.so (not system-installed on CI).
+# Let dpkg-shlibdeps compute runtime deps automatically for core only.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS      ON)
-set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS     ON)
-set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS     ON)
-set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS ON)
-# CMake 3.20+: point shlibdeps at the build tree so it can resolve libmagpie.so
-set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS_PRIVATE_DIRS     "${CMAKE_BINARY_DIR}")
-set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS_PRIVATE_DIRS     "${CMAKE_BINARY_DIR}")
-set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS_PRIVATE_DIRS "${CMAKE_BINARY_DIR}")
+
+# Audio/video: disable shlibdeps (libmagpie.so.0 is in a sibling component, not
+# system-installed, so dpkg-shlibdeps cannot resolve it). Declare deps manually.
+set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS     OFF)
+set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS     OFF)
+set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS OFF)
+
+set(CPACK_DEBIAN_AUDIO_PACKAGE_DEPENDS     "libmagpie (= ${PROJECT_VERSION})")
+set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (= ${PROJECT_VERSION})")
+set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (= ${PROJECT_VERSION})")
 
 include(CPack)
