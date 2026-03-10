@@ -16,7 +16,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(GNUInstallDirs)
 
 # Suppress CMP0167 warning from msgpack-cxx's internal find_dependency(Boost)
-cmake_policy(SET CMP0167 NEW)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.29")
+    cmake_policy(SET CMP0167 NEW)
+endif()
 
 find_package(Threads REQUIRED)
 find_package(fmt REQUIRED)

@@ -53,37 +53,65 @@ Originally built for **QTrobot** at LuxAI, MAGPIE-CPP is generic enough to be us
 
 MAGPIE-CPP uses **CMake** and targets **C++14**.
 
-### Requirements
-
-- C++14 compatible compiler
-- CMake ≥ 3.10
-- ZeroMQ (libzmq3-dev)
-- Msgpack-C (libmsgpack-dev)
-- {fmt} (libfmt-dev)
-
-Optional dependencies:
-- **Audio**: Flac encoder (libflac-dev)
-- **Video**: Jpeg encoder (libturbojpeg0-dev/libturbojpeg-dev)
-
-### CMake options
-
-```cmake
-option(MAGPIE_WITH_AUDIO      "Build audio-related components"      OFF)
-option(MAGPIE_WITH_VIDEO      "Build video-related components"      OFF)
-```
-
-### Build example
+Clone the repo first:
 
 ```bash
 git clone https://github.com/luxai-qtrobot/magpie-cpp.git
 cd magpie-cpp
+```
 
-cmake -S . -B build \
-  -DMAGPIE_WITH_AUDIO=ON \
-  -DMAGPIE_WITH_VIDEO=ON \  
+---
 
+### Magpie Core
+
+Install dependencies:
+
+```bash
+sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev
+```
+
+Build:
+
+```bash
+cmake -S . -B build
 cmake --build build
 ```
+
+---
+
+### Magpie with Audio
+
+Install additional dependency:
+
+```bash
+sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libflac-dev
+```
+
+Build:
+
+```bash
+cmake -S . -B build -DMAGPIE_WITH_AUDIO=ON
+cmake --build build
+```
+
+---
+
+### Magpie with Video
+
+Install additional dependency:
+
+```bash
+sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libturbojpeg0-dev
+```
+
+Build:
+
+```bash
+cmake -S . -B build -DMAGPIE_WITH_VIDEO=ON
+cmake --build build
+```
+
+---
 
 The library target is:
 
