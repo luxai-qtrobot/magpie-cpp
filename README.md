@@ -2,67 +2,100 @@
   <img src="https://github.com/luxai-qtrobot/magpie-cpp/raw/main/assets/magpie.png" alt="MAGPIE Logo" width="200"/>
 </p>
 
-# MAGPIE-CPP – Message Abstraction & General-Purpose Integration Engine (C++)
+<h1 align="center">MAGPIE-CPP</h1>
+<p align="center"><em>Message Abstraction & General-Purpose Integration Engine (C++)</em></p>
 
-> **MAGPIE-CPP is a lightweight, modular C++ messaging engine providing high-performance pub/sub and RPC over pluggable transports.**
+<p align="center">
+  <a href="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml">
+    <img src="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml/badge.svg?branch=main" alt="Test Status"/>
+  </a>
+</p>
 
-![Test Status](https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml/badge.svg?branch=main)
+---
 
+MAGPIE-CPP is the C++ counterpart of the original **[MAGPIE (Python)](https://github.com/luxai-qtrobot/magpie)** project. It preserves the same core concepts, wire formats, and interoperability goals while offering a modern, efficient C++14 implementation suitable for embedded, robotics, and high-performance systems.
 
-MAGPIE-CPP is the C++ counterpart of the original **MAGPIE (Python)** project.  
-It preserves the same core concepts, wire formats, and interoperability goals, while offering a modern, efficient C++14 implementation suitable for embedded, robotics, and high-performance systems.
-
-Originally built for **QTrobot** at LuxAI, MAGPIE-CPP is generic enough to be used in any C++-based distributed system or AI pipeline.
+Originally developed at **[LuxAI](https://luxai.com)** for the [QTrobot](https://luxai.com/qtrobot-for-research/) ecosystem, MAGPIE-CPP is generic enough for any C++-based distributed system or AI pipeline.
 
 ---
 
 ## Features
 
-- 📨 **High-level messaging API**
-  - Stream-oriented **pub/sub** (`StreamWriter`, `StreamReader`)
-  - **RPC** request/response (`RpcRequester`, `RpcResponder`)
-
-- 🔌 **Pluggable transports**
-  - ZeroMQ-based implementations (ZMQ Publisher / Subscriber / RPC)
-  - Transport abstraction layer for future backends
-
-- 📦 **Serialization abstraction**
-  - Abstract `Serializer` interface
-  - Msgpack-based serializer (wire-compatible with Python MAGPIE)
-
-- 🧱 **Node helper classes**
-  - `BaseNode`, `ProcessNode`, `ServerNode`, `SourceNode`, `SinkNode`
-  - Clean lifecycle management and thread-safe shutdown
-
-- 🧊 **Typed frames**
-  - Core `Frame` base class
-  - Audio frames: `AudioFrameRaw`, `AudioFrameFlac` (optional)
-  - Image frames: `ImageFrameRaw`, `ImageFrameJpeg` (optional)
-
-- 🌐 **Zeroconf / mDNS discovery**
-  - Avahi-based node discovery on Linux
-  - Interoperable with Python MAGPIE Zeroconf discovery
-
-- 🧩 **Optional components via CMake options**
-  - Core library stays lightweight
-  - Audio, video, and discovery are opt-in
+- **Pub/Sub streaming** — high-throughput topic-based messaging via `StreamWriter` / `StreamReader`
+- **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder`
+- **Pluggable transports** — ZeroMQ today; transport abstraction layer for future backends
+- **Fast serialization** — msgpack by default; wire-compatible with Python MAGPIE
+- **Typed frames** — `AudioFrameRaw`, `AudioFrameFlac`, `ImageFrameRaw`, `ImageFrameJpeg`, and more (optional)
+- **Node helpers** — base classes (`BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode`) for robust streaming services
+- **Network discovery** — mDNS/Zeroconf node advertisement and scanning via Avahi (optional)
+- **Lightweight core** — audio, video, and discovery components are fully opt-in via CMake flags
 
 ---
 
-## Build & Installation
+## Installation
+
+### Install from pre-built packages (.deb)
+
+Pre-built Debian packages are available from the [Releases](https://github.com/luxai-qtrobot/magpie-cpp/releases) page.
+
+Supported platforms:
+- Debian 13 (arm64)
+- Ubuntu 22.04 (amd64)
+- Ubuntu 24.04 (amd64)
+
+**Core library:**
+
+```bash
+# Ubuntu 24.04 amd64
+sudo dpkg -i libmagpie_0.6.2-1deb24.04_amd64.deb
+
+# Ubuntu 22.04 amd64
+sudo dpkg -i libmagpie_0.6.2-1deb22.04_amd64.deb
+
+# Debian 13 arm64
+sudo dpkg -i libmagpie_0.6.2-1deb13_arm64.deb
+```
+
+**Audio extension (optional):**
+
+```bash
+# Ubuntu 24.04 amd64
+sudo dpkg -i libmagpie-audio_0.6.2-1deb24.04_amd64.deb
+
+# Ubuntu 22.04 amd64
+sudo dpkg -i libmagpie-audio_0.6.2-1deb22.04_amd64.deb
+
+# Debian 13 arm64
+sudo dpkg -i libmagpie-audio_0.6.2-1deb13_arm64.deb
+```
+
+**Video extension (optional):**
+
+```bash
+# Ubuntu 24.04 amd64
+sudo dpkg -i libmagpie-video_0.6.2-1deb24.04_amd64.deb
+
+# Ubuntu 22.04 amd64
+sudo dpkg -i libmagpie-video_0.6.2-1deb22.04_amd64.deb
+
+# Debian 13 arm64
+sudo dpkg -i libmagpie-video_0.6.2-1deb13_arm64.deb
+```
+
+---
+
+### Build from Source
 
 MAGPIE-CPP uses **CMake** and targets **C++14**.
 
-Clone the repo first:
+Clone the repository:
 
 ```bash
 git clone https://github.com/luxai-qtrobot/magpie-cpp.git
 cd magpie-cpp
 ```
 
----
-
-### Magpie Core
+#### Core
 
 Install dependencies:
 
@@ -77,9 +110,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
----
-
-### Magpie with Audio
+#### With Audio support
 
 Install additional dependency:
 
@@ -94,9 +125,7 @@ cmake -S . -B build -DMAGPIE_WITH_AUDIO=ON
 cmake --build build
 ```
 
----
-
-### Magpie with Video
+#### With Video support
 
 Install additional dependency:
 
@@ -111,28 +140,24 @@ cmake -S . -B build -DMAGPIE_WITH_VIDEO=ON
 cmake --build build
 ```
 
----
+The CMake library target is `magpie::core`.
 
-The library target is:
-
-```cmake
-magpie::core
-```
+> **Note:** Zeroconf/mDNS discovery is always included in the core library — no extra flag or dependency needed. It uses a bundled mDNS implementation with standard POSIX sockets.
 
 ---
 
-## Supported environment
+## Supported Platforms
 
 - **C++ standard:** C++14
-- **OS / platforms (tested)**
-  - Linux (x86_64, ARM)
-  - Raspberry Pi / NVIDIA Jetson
+- **Linux** (x86\_64, ARM, Raspberry Pi, NVIDIA Jetson)
 
 ---
 
-## Quick Start Examples
+## Quick Start
 
-### Pub/Sub – Publisher
+### Pub/Sub
+
+**Publisher:**
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
@@ -154,11 +179,10 @@ int main() {
         pub.write(frame, "/mytopic");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-
 }
 ```
 
-### Pub/Sub – Subscriber
+**Subscriber:**
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
@@ -169,7 +193,6 @@ int main() {
 int main() {
     using namespace magpie;
 
-    // Subscribe to /mytopic on localhost
     ZmqSubscriber sub("tcp://127.0.0.1:5555", "/mytopic");
 
     while (true) {
@@ -183,16 +206,14 @@ int main() {
         }
 
         auto* tf = dynamic_cast<StringFrame*>(frame.get());
-        Logger::info("Subscriber: got TestFrame topic=" + topic + " value=" + tf->value());
+        Logger::info("Subscriber: got frame topic=" + topic + " value=" + tf->value());
     }
 }
 ```
 
----
+### Request / Response RPC
 
-## RPC Example
-
-### Requester
+**Requester:**
 
 ```cpp
 #include <magpie/transport/zmq_rpc_requester.hpp>
@@ -204,10 +225,8 @@ int main() {
 int main() {
     using namespace magpie;
 
-    // Connect to a ZMQRpcResponder endpoint
     ZmqRpcRequester client("tcp://127.0.0.1:5556");
 
-    // Build request object with desired payload
     Value::Dict request;
     request["message"] = Value::fromString("Hello from C++");
     request["count"]   = Value::fromInt(42);
@@ -215,7 +234,7 @@ int main() {
     try {
         Logger::info("Sending RPC request...");
         Value response = client.call(Value::fromDict(request), 5.0);
-        Logger::info("Received response: " + response.toDebugString());                
+        Logger::info("Received response: " + response.toDebugString());
     } catch (const TimeoutError& e) {
         Logger::error(std::string("RPC timeout: ") + e.what());
     } catch (const std::exception& e) {
@@ -226,7 +245,7 @@ int main() {
 }
 ```
 
-### Responder
+**Responder:**
 
 ```cpp
 #include <magpie/transport/zmq_rpc_responder.hpp>
@@ -239,50 +258,37 @@ int main() {
 int main() {
     using namespace magpie;
 
-    // Bind responder to an endpoint
     ZmqRpcResponder server("tcp://*:5556");
 
-    // Handler: echo request back
     auto onRequest = [](const Value& req) -> Value {
         Logger::info("on_request:\n" + req.toDebugString());
-        return req; 
+        return req;
     };
 
     while (true) {
         try {
-            bool ok = server.handleOnce(onRequest, 3.0);   
+            bool ok = server.handleOnce(onRequest, 3.0);
             if (!ok) {
                 Logger::info("responder: no request received.");
                 continue;
             }
-        }
-        catch (const std::exception& e) {
+        } catch (const std::exception& e) {
             Logger::error(std::string("responder error: ") + e.what());
             break;
         }
     }
 }
-
 ```
 
----
+### Network Discovery
 
-## Zeroconf / mDNS Discovery (Optional)
-
-MAGPIE-CPP supports **local network discovery** using mDNS/DNS-SD via **Avahi**.
-
-- Advertise nodes with metadata (node id, protocol, JSON payload)
-- Discover and resolve other MAGPIE nodes on the same network
-- Interoperable with Python MAGPIE discovery
-
-Example of advertising using mDNS:
+**Advertise a node:**
 
 ```cpp
 #include <magpie/discovery/zconf_discovery.hpp>
 #include <magpie/utils/logger.hpp>
 #include <magpie/utils/common.hpp>
 
-#include <iostream>
 #include <thread>
 #include <chrono>
 
@@ -291,35 +297,29 @@ int main() {
 
     const std::string nodeId = getUniqueId();
     const std::uint16_t port = 5555;
-    const std::string payload = R"({"hello":"world"})";
-
-    Logger::info("Advertising node_id=" + nodeId + " on port=" + std::to_string(port) + " ...");
+    const std::string payload = R"({"role":"robot"})";
 
     ZconfDiscovery disc;
     disc.start();
+    disc.advertise(nodeId, port, "zmq", payload);
 
-    disc.advertise( nodeId, port, "zmq", payload );
+    Logger::info("Advertising node_id=" + nodeId + " on port=" + std::to_string(port));
 
     try {
-        while (true) {
+        while (true)
             std::this_thread::sleep_for(std::chrono::seconds(10));
-        }
     } catch (...) {}
 
-    Logger::info("Advertiser shutting down...");
     disc.close();
 }
 ```
 
-
-Example of scanning using mDNS:
+**Discover nodes:**
 
 ```cpp
 #include <magpie/discovery/zconf_discovery.hpp>
 #include <magpie/utils/logger.hpp>
-#include <magpie/utils/common.hpp>
 
-#include <iostream>
 #include <thread>
 #include <chrono>
 
@@ -342,18 +342,16 @@ int main() {
             Logger::info("Discovered nodes:");
             for (const auto& info : nodes) {
                 const std::string bestIp = ZconfDiscovery::pickBestIp(info.ips);
-
                 Logger::info(
                     "  node_id=" + info.nodeId +
-                    "  ips=" + (info.ips.empty() ? "[]" : info.ips.front()) +
                     "  port=" + std::to_string(info.port) +
                     "  payload=" + info.payload +
-                    "  (best: " + bestIp + ")"
+                    "  (best ip: " + bestIp + ")"
                 );
             }
         }
     } catch (...) {}
-    
+
     disc.close();
 }
 ```
@@ -372,49 +370,40 @@ The transport layer is **pluggable** and isolated from user code.
 ### Serialization
 
 - `Serializer` abstract interface
-- Msgpack implementation
-- Wire-compatible with Python MAGPIE
+- Msgpack implementation — wire-compatible with Python MAGPIE
 
-### Nodes
+### Node Helpers
 
-Helper classes for long-running processes:
-
-- `BaseNode`
-- `ProcessNode`
-- `ServerNode`
-- `SourceNode`, `SinkNode`
-
-These simplify lifecycle management, threading, and shutdown.
+Base classes for long-running processes: `BaseNode`, `ProcessNode`, `ServerNode`, `SourceNode`, `SinkNode`.
+These simplify lifecycle management, threading, and clean shutdown.
 
 ### Frames
 
 Typed containers for structured payloads:
 
 - `Frame` (base class)
-- Audio: `AudioFrameRaw`, `AudioFrameFlac`
-- Image: `ImageFrameRaw`, `ImageFrameJpeg`
+- Audio: `AudioFrameRaw`, `AudioFrameFlac` (requires `MAGPIE_WITH_AUDIO`)
+- Image: `ImageFrameRaw`, `ImageFrameJpeg` (requires `MAGPIE_WITH_VIDEO`)
 
 ---
 
 ## Used in QTrobot
 
-MAGPIE-CPP is used internally at **LuxAI** as part of the QTrobot ecosystem for:
-
-- Distributed components
-- Audio/video streaming
-- SDK and middleware integration
+MAGPIE-CPP powers the internal messaging infrastructure of [QTrobot](https://luxai.com/qtrobot-for-research/) at **LuxAI**, handling audio/video streaming, distributed components, and SDK communication between robot subsystems.
 
 ---
 
-## Project status
+## Project Status
 
-- **Status:** Beta
-- APIs are largely stable
-- Actively used and tested with Python MAGPIE interoperability
+**Status:** Beta — actively used in production-like systems. APIs are largely stable; minor changes are still possible.
+
+**Roadmap:**
+- Additional transports (MQTT, WebRTC)
+- Multi-transport support
+- Higher-level pipeline abstractions for AI workloads
 
 ---
 
 ## License
 
-This project is licensed under the **GNU General Public License v3 (GPLv3)**.  
-See the `LICENSE` file for details.
+Licensed under the [GNU General Public License v3 (GPLv3)](LICENSE).
