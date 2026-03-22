@@ -45,7 +45,7 @@ int main() {
                 // Try to cast to StringFrame
                 auto* sf = dynamic_cast<StringFrame*>(frame.get());
                 if (sf) {
-                    Logger::info("Subscriber [" + topic + "]: '" + sf->value + "'");
+                    Logger::info("Subscriber [" + topic + "]: '" + sf->value() + "'");
                 } else {
                     Logger::info("Subscriber [" + topic + "]: received frame type '" +
                                  frame->name() + "'");

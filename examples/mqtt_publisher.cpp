@@ -43,7 +43,7 @@ int main() {
     int count = 0;
     while (running) {
         StringFrame frame("hello from C++ #" + std::to_string(count++));
-        Logger::info("Publisher: sending '" + frame.value + "'");
+        Logger::info("Publisher: sending '" + frame.value() + "'");
         pub.write(frame, "magpie/test/topic");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
