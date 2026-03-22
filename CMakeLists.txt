@@ -6,6 +6,7 @@ project(magpie
 
 option(MAGPIE_WITH_AUDIO      "Build audio-related components" OFF)
 option(MAGPIE_WITH_VIDEO      "Build video-related components" OFF)
+option(MAGPIE_WITH_MQTT       "Build MQTT transport components" OFF)
 option(MAGPIE_BUILD_TESTS     "Build unit tests"               OFF)
 option(MAGPIE_BUILD_EXAMPLES  "Build examples"                 ON)
 
@@ -137,6 +138,56 @@ if(MAGPIE_WITH_AUDIO)
     )
 endif()
 
+# MQTT
+if(MAGPIE_WITH_MQTT)
+    # ---- Find Paho MQTT C++ library ----
+    # Try CMake config first (installed by paho-mqtt-cpp >= 1.2)
+    find_package(PahoMqttCpp CONFIG QUIET)
+
+    if(PahoMqttCpp_FOUND)
+        set(MAGPIE_PAHOMQTTCPP_TARGET PahoMqttCpp::paho-mqttpp3)
+        message(STATUS "Found PahoMqttCpp via CMake config")
+    else()
+        # Manual fallback (e.g. libpaho-mqttpp3-dev on Ubuntu without cmake config)
+        find_library(PAHOMQTTCPP_LIB    NAMES paho-mqttpp3 REQUIRED)
+        find_path   (PAHOMQTTCPP_INCLUDE NAMES mqtt/async_client.h REQUIRED)
+
+        add_library(PahoMqttCpp::paho-mqttpp3 UNKNOWN IMPORTED)
+        set_target_properties(PahoMqttCpp::paho-mqttpp3 PROPERTIES
+            IMPORTED_LOCATION        "${PAHOMQTTCPP_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${PAHOMQTTCPP_INCLUDE}"
+        )
+        set(MAGPIE_PAHOMQTTCPP_TARGET PahoMqttCpp::paho-mqttpp3)
+        message(STATUS "Found paho-mqttpp3 via manual search: ${PAHOMQTTCPP_LIB}")
+    endif()
+
+    add_library(magpie_mqtt SHARED
+        src/transport/mqtt/mqtt_connection.cpp
+        src/transport/mqtt/mqtt_publisher.cpp
+        src/transport/mqtt/mqtt_subscriber.cpp
+        src/transport/mqtt/mqtt_rpc_requester.cpp
+        src/transport/mqtt/mqtt_rpc_responder.cpp
+    )
+    add_library(magpie::mqtt ALIAS magpie_mqtt)
+
+    target_link_libraries(magpie_mqtt
+        PUBLIC
+            magpie_core
+        PRIVATE
+            ${MAGPIE_PAHOMQTTCPP_TARGET}
+    )
+
+    target_compile_definitions(magpie_mqtt PUBLIC MAGPIE_WITH_MQTT)
+    target_compile_features(magpie_mqtt PUBLIC cxx_std_14)
+
+    set_target_properties(magpie_mqtt PROPERTIES
+        VERSION     ${PROJECT_VERSION}
+        SOVERSION   ${PROJECT_VERSION_MAJOR}
+        OUTPUT_NAME magpie-mqtt
+        EXPORT_NAME mqtt
+    )
+endif()
+
 # Video
 if(MAGPIE_WITH_VIDEO)
     add_library(magpie_video SHARED
@@ -180,7 +231,7 @@ endif()
 
 # --------------------------------------------------------------------------------------
 # Installation (split into components for separate .deb packages)
-# Components: core, audio, video, discovery
+# Components: core, audio, mqtt, video, discovery
 # --------------------------------------------------------------------------------------
 
 # Core runtime library -> libmagpie
@@ -203,6 +254,15 @@ if(TARGET magpie_audio)
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT audio
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT audio
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT audio
+    )
+endif()
+
+if(TARGET magpie_mqtt)
+    install(TARGETS magpie_mqtt
+        EXPORT MagpieTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT mqtt
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT mqtt
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT mqtt
     )
 endif()
 
@@ -288,6 +348,9 @@ set(_magpie_components "core")
 if(TARGET magpie_audio)
     list(APPEND _magpie_components "audio")
 endif()
+if(TARGET magpie_mqtt)
+    list(APPEND _magpie_components "mqtt")
+endif()
 if(TARGET magpie_video)
     list(APPEND _magpie_components "video")
 endif()
@@ -302,6 +365,7 @@ set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 # Package names per component (the .deb filenames)
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME       "libmagpie")
 set(CPACK_DEBIAN_AUDIO_PACKAGE_NAME      "libmagpie-audio")
+set(CPACK_DEBIAN_MQTT_PACKAGE_NAME       "libmagpie-mqtt")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_NAME      "libmagpie-video")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
 
@@ -309,13 +373,15 @@ set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_CORE_PACKAGE_SHLIBDEPS      ON)
 
-# Audio/video: disable shlibdeps (libmagpie.so.0 is in a sibling component, not
+# Audio/video/mqtt: disable shlibdeps (libmagpie.so.0 is in a sibling component, not
 # system-installed, so dpkg-shlibdeps cannot resolve it). Declare deps manually.
 set(CPACK_DEBIAN_AUDIO_PACKAGE_SHLIBDEPS     OFF)
+set(CPACK_DEBIAN_MQTT_PACKAGE_SHLIBDEPS      OFF)
 set(CPACK_DEBIAN_VIDEO_PACKAGE_SHLIBDEPS     OFF)
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_SHLIBDEPS OFF)
 
 set(CPACK_DEBIAN_AUDIO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
+set(CPACK_DEBIAN_MQTT_PACKAGE_DEPENDS      "libmagpie (>= ${PROJECT_VERSION}), libpaho-mqttpp3 (>= 1.0)")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (>= ${PROJECT_VERSION})")
 

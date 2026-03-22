@@ -22,13 +22,14 @@ Originally developed at **[LuxAI](https://luxai.com)** for the [QTrobot](https:/
 ## Features
 
 - **Pub/Sub streaming** — high-throughput topic-based messaging via `StreamWriter` / `StreamReader`
-- **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder`
-- **Pluggable transports** — ZeroMQ today; transport abstraction layer for future backends
+- **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder` or `MqttRpcRequester` / `MqttRpcResponder`
+- **Pluggable transports** — ZeroMQ and MQTT (paho); transport abstraction layer makes adding new backends straightforward
+- **MQTT transport** — full pub/sub and RPC over MQTT with wildcard topics, TLS, auth, and auto-reconnect (optional)
 - **Fast serialization** — msgpack by default; wire-compatible with Python MAGPIE
 - **Typed frames** — `AudioFrameRaw`, `AudioFrameFlac`, `ImageFrameRaw`, `ImageFrameJpeg`, and more (optional)
 - **Node helpers** — base classes (`BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode`) for robust streaming services
 - **Network discovery** — mDNS/Zeroconf node advertisement and scanning via Avahi (optional)
-- **Lightweight core** — audio, video, and discovery components are fully opt-in via CMake flags
+- **Lightweight core** — audio, video, MQTT, and discovery components are fully opt-in via CMake flags
 
 ---
 
@@ -67,6 +68,19 @@ sudo dpkg -i libmagpie-audio_0.6.2-1deb22.04_amd64.deb
 
 # Debian 13 arm64
 sudo dpkg -i libmagpie-audio_0.6.2-1deb13_arm64.deb
+```
+
+**MQTT extension (optional):**
+
+```bash
+# Ubuntu 24.04 amd64
+sudo dpkg -i libmagpie-mqtt_0.6.2-1deb24.04_amd64.deb
+
+# Ubuntu 22.04 amd64
+sudo dpkg -i libmagpie-mqtt_0.6.2-1deb22.04_amd64.deb
+
+# Debian 13 arm64
+sudo dpkg -i libmagpie-mqtt_0.6.2-1deb13_arm64.deb
 ```
 
 **Video extension (optional):**
@@ -124,6 +138,24 @@ Build:
 cmake -S . -B build -DMAGPIE_WITH_AUDIO=ON
 cmake --build build
 ```
+
+#### With MQTT support
+
+Install additional dependencies:
+
+```bash
+sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev \
+                 libpaho-mqtt3as-dev libpaho-mqttpp3-dev
+```
+
+Build:
+
+```bash
+cmake -S . -B build -DMAGPIE_WITH_MQTT=ON
+cmake --build build
+```
+
+The CMake library target is `magpie::mqtt`.
 
 #### With Video support
 
@@ -280,6 +312,134 @@ int main() {
 }
 ```
 
+### MQTT Pub/Sub
+
+All MQTT components share a single `MqttConnection` to the broker.
+
+**Publisher:**
+
+```cpp
+#include <magpie/frames/primitive_frames.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_publisher.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    conn->connect();
+
+    MqttPublisher pub(conn);
+
+    StringFrame frame("hello from C++");
+    pub.write(frame, "sensors/temperature");
+
+    pub.close();
+    conn->disconnect();
+}
+```
+
+**Subscriber** (supports `+` and `#` wildcards):
+
+```cpp
+#include <magpie/frames/primitive_frames.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_subscriber.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    conn->connect();
+
+    MqttSubscriber sub(conn, "sensors/+");
+
+    std::unique_ptr<Frame> frame;
+    std::string topic;
+    if (sub.read(frame, topic, 5.0)) {
+        auto* sf = dynamic_cast<StringFrame*>(frame.get());
+        Logger::info("[" + topic + "] " + sf->value);
+    }
+
+    sub.close();
+    conn->disconnect();
+}
+```
+
+### MQTT RPC
+
+**Requester:**
+
+```cpp
+#include <magpie/serializer/value.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_rpc_requester.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    conn->connect();
+
+    MqttRpcRequester req(conn, "robot/motion");
+
+    Value::Dict d;
+    d["action"] = Value::fromString("move");
+    Value response = req.call(Value::fromDict(d), 5.0);
+
+    req.close();
+    conn->disconnect();
+}
+```
+
+**Responder:**
+
+```cpp
+#include <magpie/serializer/value.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_rpc_responder.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    conn->connect();
+
+    MqttRpcResponder rsp(conn, "robot/motion");
+
+    rsp.handleOnce([](const Value& req) -> Value {
+        return Value::fromString("ok");
+    }, /*timeoutSec=*/10.0);
+
+    rsp.close();
+    conn->disconnect();
+}
+```
+
+#### MQTT URI schemes
+
+| URI | Transport |
+|-----|-----------|
+| `mqtt://host:1883` | Plain TCP |
+| `mqtts://host:8883` | TLS/TCP |
+| `ws://host:9001/mqtt` | WebSocket |
+| `wss://host:8884/mqtt` | TLS WebSocket |
+
+#### Advanced options (TLS, auth, reconnect)
+
+```cpp
+MqttOptions opts;
+opts.auth.mode     = "username_password";
+opts.auth.username = "user";
+opts.auth.password = "pass";
+opts.tls.caFile    = "/etc/ssl/certs/ca-certificates.crt";
+opts.reconnect.maxDelaySec = 60;
+
+auto conn = std::make_shared<MqttConnection>("mqtts://broker.example.com:8883",
+                                              "my-client-id", opts);
+conn->connect();
+```
+
 ### Network Discovery
 
 **Advertise a node:**
@@ -362,10 +522,14 @@ int main() {
 
 ### Transports
 
-- ZeroMQ Publisher / Subscriber
-- ZeroMQ RPC Requester / Responder
+| Transport | Pub/Sub | RPC | Package |
+|-----------|---------|-----|---------|
+| ZeroMQ | `ZmqPublisher` / `ZmqSubscriber` | `ZmqRpcRequester` / `ZmqRpcResponder` | core |
+| MQTT (paho) | `MqttPublisher` / `MqttSubscriber` | `MqttRpcRequester` / `MqttRpcResponder` | `magpie::mqtt` |
 
-The transport layer is **pluggable** and isolated from user code.
+The transport layer is **pluggable**: `StreamWriter`, `StreamReader`, `RpcRequester`, and `RpcResponder` are abstract base classes. Switching from ZMQ to MQTT (or any future transport) requires no changes to application-level frame or node code.
+
+The MQTT transport shares a single `MqttConnection` per broker across all publishers, subscribers, and RPC components, reusing one TCP/TLS connection.
 
 ### Serialization
 
@@ -398,7 +562,8 @@ MAGPIE-CPP powers the internal messaging infrastructure of [QTrobot](https://lux
 **Status:** Beta — actively used in production-like systems. APIs are largely stable; minor changes are still possible.
 
 **Roadmap:**
-- Additional transports (MQTT, WebRTC)
+- ~~Additional transports (MQTT)~~ ✓ Done — `magpie::mqtt` sub-package
+- Additional transports (WebRTC)
 - Multi-transport support
 - Higher-level pipeline abstractions for AI workloads
 
