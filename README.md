@@ -144,7 +144,7 @@ cmake --build build
 Install additional dependencies:
 
 ```bash
-sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libpaho-mqttpp-dev
+sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libpaho-mqtt3-dev libpaho-mqttpp-dev
 ```
 
 Build:
