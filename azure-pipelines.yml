@@ -1,0 +1,65 @@
+trigger:
+  branches:
+    include:
+      - '*'
+
+pr:
+  branches:
+    include:
+      - '*'
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+
+  - script: |
+      sudo apt-get update
+      sudo apt-get install -y \
+        cmake ninja-build pkg-config \
+        g++ \
+        libzmq3-dev \
+        libmsgpack-dev \
+        libfmt-dev
+    displayName: Install system deps (ZeroMQ, msgpack, toolchain)
+
+  - script: |
+      git clone --depth 1 https://github.com/robotology/robot-testing-framework.git
+      cmake -S robot-testing-framework -B robot-testing-framework/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=$(Build.SourcesDirectory)/rtf_install
+      cmake --build robot-testing-framework/build
+      cmake --install robot-testing-framework/build
+    displayName: Build & install RobotTestingFramework
+
+  - script: echo "##vso[task.prependpath]$(Build.SourcesDirectory)/rtf_install/bin"
+    displayName: Add RTF to PATH
+
+  - script: |
+      cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DMAGPIE_BUILD_TESTS=ON \
+        -DRobotTestingFramework_DIR=$(Build.SourcesDirectory)/rtf_install/lib/cmake/RobotTestingFramework
+    displayName: Configure (magpie)
+
+  - script: cmake --build build
+    displayName: Build (magpie)
+
+  - script: ctest --test-dir build -V
+    displayName: Run tests (CTest -> RTF runner -> JUnit)
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: build/result.xml
+      testRunTitle: RobotTestingFramework
+      failTaskOnFailedTests: false
+
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: build/result.xml
+      artifact: rtf-junit
+      publishLocation: pipeline
