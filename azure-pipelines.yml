@@ -1,65 +1,70 @@
 trigger:
-  branches:
+  tags:
     include:
+      - v*
+  branches:
+    exclude:
       - '*'
 
-pr:
-  branches:
-    include:
-      - '*'
+pr: none
 
-pool:
-  vmImage: ubuntu-latest
+jobs:
+  - job: BuildDebs
+    displayName: Build DEBs (${{ variables.distroName }})
+    strategy:
+      matrix:
+        ubuntu_22_04:
+          vmImage: ubuntu-22.04
+          distroName: ubuntu-22.04
+        ubuntu_24_04:
+          vmImage: ubuntu-24.04
+          distroName: ubuntu24.04
 
-steps:
-  - checkout: self
+    pool:
+      vmImage: $(vmImage)
 
-  - script: |
-      sudo apt-get update
-      sudo apt-get install -y \
-        cmake ninja-build pkg-config \
-        g++ \
-        libzmq3-dev \
-        libmsgpack-dev \
-        libfmt-dev
-    displayName: Install system deps (ZeroMQ, msgpack, toolchain)
+    steps:
+      - checkout: self
 
-  - script: |
-      git clone --depth 1 https://github.com/robotology/robot-testing-framework.git
-      cmake -S robot-testing-framework -B robot-testing-framework/build -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=$(Build.SourcesDirectory)/rtf_install
-      cmake --build robot-testing-framework/build
-      cmake --install robot-testing-framework/build
-    displayName: Build & install RobotTestingFramework
+      - script: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config g++ \
+            libzmq3-dev libmsgpack-dev \
+            libflac-dev \
+            libturbojpeg0-dev \
+            libfmt-dev \
+            dpkg-dev fakeroot
+        displayName: Install system deps
 
-  - script: echo "##vso[task.prependpath]$(Build.SourcesDirectory)/rtf_install/bin"
-    displayName: Add RTF to PATH
+      - script: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMAGPIE_WITH_AUDIO=ON \
+            -DMAGPIE_WITH_VIDEO=ON \
+            -DMAGPIE_BUILD_TESTS=OFF \
+            -DMAGPIE_BUILD_EXAMPLES=OFF
+        displayName: Configure (Release, enable features)
 
-  - script: |
-      cmake -S . -B build -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DMAGPIE_BUILD_TESTS=ON \
-        -DRobotTestingFramework_DIR=$(Build.SourcesDirectory)/rtf_install/lib/cmake/RobotTestingFramework
-    displayName: Configure (magpie)
+      - script: cmake --build build
+        displayName: Build
 
-  - script: cmake --build build
-    displayName: Build (magpie)
+      - script: |
+          cd build
+          cpack -G DEB
+        displayName: Package (.deb via CPack)
 
-  - script: ctest --test-dir build -V
-    displayName: Run tests (CTest -> RTF runner -> JUnit)
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: build
+          artifact: debs-$(distroName)
+          publishLocation: pipeline
+          patterns: '**/*.deb'
 
-  - task: PublishTestResults@2
-    condition: always()
-    inputs:
-      testResultsFormat: JUnit
-      testResultsFiles: build/result.xml
-      testRunTitle: RobotTestingFramework
-      failTaskOnFailedTests: false
-
-  - task: PublishPipelineArtifact@1
-    condition: always()
-    inputs:
-      targetPath: build/result.xml
-      artifact: rtf-junit
-      publishLocation: pipeline
+      # Requires a GITHUB_TOKEN pipeline variable (secret) with repo write access
+      - script: |
+          gh release upload $(Build.SourceBranchName) build/*.deb --clobber
+        displayName: Upload DEBs to GitHub Release (tag builds only)
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        env:
+          GH_TOKEN: $(GITHUB_TOKEN)
