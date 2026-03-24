@@ -178,7 +178,7 @@ if(MAGPIE_WITH_MQTT)
     )
 
     target_compile_definitions(magpie_mqtt PUBLIC MAGPIE_WITH_MQTT)
-    target_compile_features(magpie_mqtt PUBLIC cxx_std_14)
+    target_compile_features(magpie_mqtt PUBLIC cxx_std_17)
 
     set_target_properties(magpie_mqtt PROPERTIES
         VERSION     ${PROJECT_VERSION}

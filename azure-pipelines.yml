@@ -31,6 +31,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config g++ \
             libzmq3-dev libmsgpack-dev \
+            libpaho-mqtt-dev libpaho-mqttpp-dev \
             libflac-dev \
             libturbojpeg0-dev \
             libfmt-dev \
@@ -42,6 +43,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DMAGPIE_WITH_AUDIO=ON \
             -DMAGPIE_WITH_VIDEO=ON \
+            -DMAGPIE_WITH_MQTT=ON \
             -DMAGPIE_BUILD_TESTS=OFF \
             -DMAGPIE_BUILD_EXAMPLES=OFF
         displayName: Configure (Release, enable features)
