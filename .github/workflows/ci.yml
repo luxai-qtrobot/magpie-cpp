@@ -24,6 +24,7 @@ jobs:
             g++ \
             libzmq3-dev \
             libmsgpack-dev \
+            libpaho-mqtt-dev libpaho-mqttpp-dev \
             libfmt-dev
 
       - name: Build & install RobotTestingFramework

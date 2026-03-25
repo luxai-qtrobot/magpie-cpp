@@ -1,0 +1,72 @@
+trigger:
+  tags:
+    include:
+      - v*
+  branches:
+    exclude:
+      - '*'
+
+pr: none
+
+jobs:
+  - job: BuildDebs
+    displayName: Build DEBs (${{ variables.distroName }})
+    strategy:
+      matrix:
+        ubuntu_22_04:
+          vmImage: ubuntu-22.04
+          distroName: ubuntu-22.04
+        ubuntu_24_04:
+          vmImage: ubuntu-24.04
+          distroName: ubuntu24.04
+
+    pool:
+      vmImage: $(vmImage)
+
+    steps:
+      - checkout: self
+
+      - script: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config g++ \
+            libzmq3-dev libmsgpack-dev \
+            libpaho-mqtt-dev libpaho-mqttpp-dev \
+            libflac-dev \
+            libturbojpeg0-dev \
+            libfmt-dev \
+            dpkg-dev fakeroot
+        displayName: Install system deps
+
+      - script: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMAGPIE_WITH_AUDIO=ON \
+            -DMAGPIE_WITH_VIDEO=ON \
+            -DMAGPIE_WITH_MQTT=ON \
+            -DMAGPIE_BUILD_TESTS=OFF \
+            -DMAGPIE_BUILD_EXAMPLES=OFF
+        displayName: Configure (Release, enable features)
+
+      - script: cmake --build build
+        displayName: Build
+
+      - script: |
+          cd build
+          cpack -G DEB
+        displayName: Package (.deb via CPack)
+
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: build
+          artifact: debs-$(distroName)
+          publishLocation: pipeline
+          patterns: '**/*.deb'
+
+      # Requires a GITHUB_TOKEN pipeline variable (secret) with repo write access
+      - script: |
+          gh release upload $(Build.SourceBranchName) build/*.deb --clobber
+        displayName: Upload DEBs to GitHub Release (tag builds only)
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        env:
+          GH_TOKEN: $(GITHUB_TOKEN)
