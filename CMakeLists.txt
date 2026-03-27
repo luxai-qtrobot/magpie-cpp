@@ -4,11 +4,12 @@ project(magpie
     LANGUAGES CXX
 )
 
-option(MAGPIE_WITH_AUDIO      "Build audio-related components" OFF)
-option(MAGPIE_WITH_VIDEO      "Build video-related components" OFF)
+option(MAGPIE_WITH_AUDIO      "Build audio-related components"  OFF)
+option(MAGPIE_WITH_VIDEO      "Build video-related components"  OFF)
 option(MAGPIE_WITH_MQTT       "Build MQTT transport components" OFF)
-option(MAGPIE_BUILD_TESTS     "Build unit tests"               OFF)
-option(MAGPIE_BUILD_EXAMPLES  "Build examples"                 ON)
+option(MAGPIE_WITH_WEBRTC     "Build WebRTC transport components (requires MAGPIE_WITH_MQTT and libdatachannel)" OFF)
+option(MAGPIE_BUILD_TESTS     "Build unit tests"                OFF)
+option(MAGPIE_BUILD_EXAMPLES  "Build examples"                  ON)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -215,6 +216,58 @@ if(MAGPIE_WITH_VIDEO)
     )
 endif()
 
+# WebRTC
+if(MAGPIE_WITH_WEBRTC)
+    if(NOT MAGPIE_WITH_MQTT)
+        message(FATAL_ERROR "MAGPIE_WITH_WEBRTC requires MAGPIE_WITH_MQTT=ON")
+    endif()
+
+    # ---- Find libdatachannel ----
+    find_package(LibDataChannel CONFIG QUIET)
+    if(LibDataChannel_FOUND)
+        set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel)
+        message(STATUS "Found libdatachannel via CMake config")
+    else()
+        find_library(LIBDATACHANNEL_LIB    NAMES datachannel REQUIRED)
+        find_path   (LIBDATACHANNEL_INCLUDE NAMES rtc/rtc.hpp REQUIRED)
+
+        add_library(LibDataChannel::LibDataChannel UNKNOWN IMPORTED)
+        set_target_properties(LibDataChannel::LibDataChannel PROPERTIES
+            IMPORTED_LOCATION             "${LIBDATACHANNEL_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${LIBDATACHANNEL_INCLUDE}"
+        )
+        set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel)
+        message(STATUS "Found libdatachannel via manual search: ${LIBDATACHANNEL_LIB}")
+    endif()
+
+    add_library(magpie_webrtc SHARED
+        src/transport/webrtc/webrtc_connection.cpp
+        src/transport/webrtc/webrtc_publisher.cpp
+        src/transport/webrtc/webrtc_subscriber.cpp
+        src/transport/webrtc/webrtc_rpc_requester.cpp
+        src/transport/webrtc/webrtc_rpc_responder.cpp
+    )
+    add_library(magpie::webrtc ALIAS magpie_webrtc)
+
+    target_link_libraries(magpie_webrtc
+        PUBLIC
+            magpie_core
+            magpie_mqtt
+        PRIVATE
+            ${MAGPIE_LIBDATACHANNEL_TARGET}
+    )
+
+    target_compile_definitions(magpie_webrtc PUBLIC MAGPIE_WITH_WEBRTC)
+    target_compile_features(magpie_webrtc PUBLIC cxx_std_17)
+
+    set_target_properties(magpie_webrtc PROPERTIES
+        VERSION     ${PROJECT_VERSION}
+        SOVERSION   ${PROJECT_VERSION_MAJOR}
+        OUTPUT_NAME magpie-webrtc
+        EXPORT_NAME webrtc
+    )
+endif()
+
 # --------------------------------------------------------------------------------------
 # Examples / Tests
 # --------------------------------------------------------------------------------------
@@ -272,6 +325,15 @@ if(TARGET magpie_video)
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT video
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT video
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT video
+    )
+endif()
+
+if(TARGET magpie_webrtc)
+    install(TARGETS magpie_webrtc
+        EXPORT MagpieTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT webrtc
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT webrtc
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT webrtc
     )
 endif()
 
@@ -357,6 +419,9 @@ endif()
 if(TARGET magpie_discovery)
     list(APPEND _magpie_components "discovery")
 endif()
+if(TARGET magpie_webrtc)
+    list(APPEND _magpie_components "webrtc")
+endif()
 set(CPACK_COMPONENTS_ALL ${_magpie_components})
 
 # Use Debian-standard filename format: <package>_<version>-<release>_<arch>.deb
@@ -368,6 +433,7 @@ set(CPACK_DEBIAN_AUDIO_PACKAGE_NAME      "libmagpie-audio")
 set(CPACK_DEBIAN_MQTT_PACKAGE_NAME       "libmagpie-mqtt")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_NAME      "libmagpie-video")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_NAME  "libmagpie-discovery")
+set(CPACK_DEBIAN_WEBRTC_PACKAGE_NAME     "libmagpie-webrtc")
 
 # Let dpkg-shlibdeps compute runtime deps automatically for core only.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
@@ -384,5 +450,7 @@ set(CPACK_DEBIAN_AUDIO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_MQTT_PACKAGE_DEPENDS      "libmagpie (>= ${PROJECT_VERSION}), libpaho-mqttpp3-1 (>= 1.0)")
 set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (>= ${PROJECT_VERSION})")
+set(CPACK_DEBIAN_WEBRTC_PACKAGE_SHLIBDEPS  OFF)
+set(CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS    "libmagpie (>= ${PROJECT_VERSION}), libmagpie-mqtt (>= ${PROJECT_VERSION}), libdatachannel (>= 0.18)")
 
 include(CPack)

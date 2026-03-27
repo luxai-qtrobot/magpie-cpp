@@ -25,6 +25,7 @@ Originally developed at **[LuxAI](https://luxai.com)** for the [QTrobot](https:/
 - **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder` or `MqttRpcRequester` / `MqttRpcResponder`
 - **Pluggable transports** — ZeroMQ and MQTT (paho); transport abstraction layer makes adding new backends straightforward
 - **MQTT transport** — full pub/sub and RPC over MQTT with wildcard topics, TLS, auth, and auto-reconnect (optional)
+- **WebRTC transport** — P2P pub/sub, video/audio streaming, and RPC over WebRTC; MQTT used for the initial signaling handshake, all payload traffic flows directly peer-to-peer; STUN + optional TURN for NAT traversal (optional)
 - **Fast serialization** — msgpack by default; wire-compatible with Python MAGPIE
 - **Typed frames** — `AudioFrameRaw`, `AudioFrameFlac`, `ImageFrameRaw`, `ImageFrameJpeg`, and more (optional)
 - **Node helpers** — base classes (`BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode`) for robust streaming services
@@ -172,6 +173,25 @@ cmake --build build
 ```
 
 The CMake library target is `magpie::core`.
+
+#### With WebRTC support
+
+WebRTC transport requires MQTT support and [libdatachannel](https://github.com/paullouisageneau/libdatachannel).
+
+Install libdatachannel (from source or a distro package, e.g.):
+
+```bash
+sudo apt install libdatachannel-dev   # or build from source
+```
+
+Build:
+
+```bash
+cmake -S . -B build -DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON
+cmake --build build
+```
+
+The CMake library target is `magpie::webrtc`.
 
 > **Note:** Zeroconf/mDNS discovery is always included in the core library — no extra flag or dependency needed. It uses a bundled mDNS implementation with standard POSIX sockets.
 
@@ -413,6 +433,196 @@ int main() {
     rsp.close();
     conn->disconnect();
 }
+```
+
+### WebRTC Pub/Sub
+
+WebRTC transport enables **P2P communication over the internet** — no broker in the data path after the initial handshake.  A `WebRtcConnection` is shared by all publishers, subscribers, and RPC components, mirroring the `MqttConnection` pattern.
+
+Signaling (SDP offer/answer + ICE candidates) is exchanged via MQTT.  Role negotiation (offerer vs answerer) is fully automatic.
+
+`WebRtcPublisher` routes internally based on frame type and the `useMediaChannels` option (default `true`):
+
+| Frame type | `useMediaChannels=true` | `useMediaChannels=false` |
+|---|---|---|
+| `ImageFrameRaw` / `AudioFrameRaw` | `magpie-media` unreliable data channel | reliable `magpie` data channel (`{"type":"media","topic":"..."}`) |
+| everything else | reliable `magpie` data channel | reliable `magpie` data channel |
+
+With `useMediaChannels=false`, video and audio frames are topic-routed just like regular data, enabling **multiple simultaneous video/audio topics** (e.g. two cameras on different topics).
+
+**Publisher:**
+
+```cpp
+#include <magpie/frames/image_frame.hpp>
+#include <magpie/frames/primitive_frames.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <magpie/transport/webrtc_publisher.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    sig->connect();
+
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
+    if (!conn->connect(30.0)) {
+        Logger::error("peer not found");
+        return 1;
+    }
+
+    WebRtcPublisher pub(conn);
+
+    // Send arbitrary data over the data channel
+    DictFrame state;
+    state["x"] = 1.0;
+    pub.write(state, "robot/state");
+
+    // Send a video frame over the magpie-media unreliable channel
+    // (capture a real frame here; this is just a placeholder allocation)
+    ImageFrameRaw img(width * height * 3, "raw", width, height, 3, "BGR");
+    pub.write(img);   // topic defaults to "video"
+
+    pub.close();
+    conn->disconnect();
+    sig->disconnect();
+}
+```
+
+**Subscriber:**
+
+```cpp
+#include <magpie/frames/image_frame.hpp>
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <magpie/transport/webrtc_subscriber.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    sig->connect();
+
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
+    if (!conn->connect(30.0)) { return 1; }
+
+    // Subscribe to a data channel topic
+    WebRtcSubscriber sub(conn, "robot/state");
+
+    // Subscribe to video frames (magpie-media channel)
+    WebRtcSubscriber vsub(conn, WebRtcSubscriber::VIDEO_TOPIC);
+
+    while (true) {
+        std::unique_ptr<Frame> frame;
+        std::string topic;
+
+        if (sub.read(frame, topic, 3.0)) {
+            Logger::info("data: " + topic);
+        }
+        if (vsub.read(frame, topic, 0.0)) {
+            auto* img = dynamic_cast<ImageFrameRaw*>(frame.get());
+            Logger::info("video frame " + std::to_string(img->width()) +
+                         "x" + std::to_string(img->height()));
+        }
+    }
+
+    sub.close();
+    vsub.close();
+    conn->disconnect();
+    sig->disconnect();
+}
+```
+
+### WebRTC RPC
+
+RPC over WebRTC uses the bidirectional data channel — no broker in the hot path, lower latency than MQTT RPC.
+
+**Requester:**
+
+```cpp
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <magpie/transport/webrtc_rpc_requester.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    sig->connect();
+
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot-rpc");
+    if (!conn->connect(30.0)) { return 1; }
+
+    WebRtcRpcRequester req(conn, "robot/motion");
+
+    Value::Dict d;
+    d["action"] = Value::fromString("move");
+    d["x"]      = Value::fromFloat(1.0);
+
+    try {
+        Value response = req.call(Value::fromDict(d), 5.0);
+        Logger::info("response: " + response.toDebugString());
+    } catch (const TimeoutError& e) {
+        Logger::error(std::string("timeout: ") + e.what());
+    }
+
+    req.close();
+    conn->disconnect();
+    sig->disconnect();
+}
+```
+
+**Responder:**
+
+```cpp
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <magpie/transport/webrtc_rpc_responder.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    sig->connect();
+
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot-rpc");
+    if (!conn->connect(30.0)) { return 1; }
+
+    WebRtcRpcResponder rsp(conn, "robot/motion");
+
+    rsp.handleOnce([](const Value& req) -> Value {
+        Logger::info("request: " + req.toDebugString());
+        return Value::fromString("ok");
+    }, /*timeoutSec=*/10.0);
+
+    rsp.close();
+    conn->disconnect();
+    sig->disconnect();
+}
+```
+
+### WebRTC Advanced Options
+
+```cpp
+#include <magpie/transport/webrtc_options.hpp>
+
+WebRtcOptions opts;
+
+// Disable STUN for pure-LAN use (faster connection, no external server needed)
+opts.iceServers = {};
+
+// Add a TURN relay server for strict NAT / corporate firewall scenarios
+opts.iceServers.push_back({"turn:myturn.server:3478", "user", "pass"});
+opts.iceTransportPolicy = "relay";   // force relay only
+
+// Auto-reconnect when the peer connection drops
+opts.reconnect = true;
+
+// Route video/audio via the reliable data channel instead of magpie-media
+// (useful when connecting to a peer without magpie-media support)
+opts.useMediaChannels = false;
+
+auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot", opts);
 ```
 
 #### MQTT URI schemes

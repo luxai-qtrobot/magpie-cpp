@@ -46,3 +46,17 @@ if(MAGPIE_WITH_VIDEO)
     add_executable(example_image_jpeg image_jpeg.cpp)
     target_link_libraries(example_image_jpeg PRIVATE magpie::core magpie::video)
 endif()
+
+if(MAGPIE_WITH_WEBRTC)
+    add_executable(example_webrtc_publisher webrtc_publisher.cpp)
+    target_link_libraries(example_webrtc_publisher PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+
+    add_executable(example_webrtc_subscriber webrtc_subscriber.cpp)
+    target_link_libraries(example_webrtc_subscriber PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+
+    add_executable(example_webrtc_rpc_requester webrtc_rpc_requester.cpp)
+    target_link_libraries(example_webrtc_rpc_requester PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+
+    add_executable(example_webrtc_rpc_responder webrtc_rpc_responder.cpp)
+    target_link_libraries(example_webrtc_rpc_responder PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+endif()
