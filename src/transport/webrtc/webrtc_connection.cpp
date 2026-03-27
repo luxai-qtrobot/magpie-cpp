@@ -335,21 +335,16 @@ struct WebRtcConnection::Impl {
 
         // --- offer ---
         else if (msgType == "offer") {
+            // Ignore once the data channel is already open
+            if (connected.load()) return;
+
             auto itSdp = d.find("sdp");
             if (itSdp == d.end() || itSdp->second.type() != Value::Type::String) return;
             const std::string sdp = itSdp->second.asString();
 
             Logger::debug("WebRtcConnection(" + peerId + "): received SDP offer.");
 
-            {
-                std::lock_guard<std::mutex> lk(roleMutex);
-                if (!pc) {
-                    // Offer arrived before hello (race condition) — set up PC now
-                    Logger::debug("WebRtcConnection(" + peerId + "): PC not ready, setting up for offer.");
-                }
-            }
-
-            // Ensure PC exists
+            // Ensure PC exists (offer may arrive before hello in some race conditions)
             if (!pc) {
                 setupPeerConnection();
             }
@@ -361,8 +356,9 @@ struct WebRtcConnection::Impl {
                     remoteDescSet = true;
                 }
                 applyPendingCandidates();
-                // Answer SDP is generated automatically via onLocalDescription callback
-                pc->setLocalDescription();
+                // setRemoteDescription(offer) causes libdatachannel to fire onLocalDescription
+                // with the answer automatically — do NOT call setLocalDescription() here or it
+                // will generate a second (offer) description and start an infinite renegotiation loop.
             } catch (const std::exception& e) {
                 Logger::warning("WebRtcConnection: offer handling error: " + std::string(e.what()));
             }
@@ -370,6 +366,9 @@ struct WebRtcConnection::Impl {
 
         // --- answer ---
         else if (msgType == "answer") {
+            // Ignore once the data channel is already open
+            if (connected.load()) return;
+
             auto itSdp = d.find("sdp");
             if (itSdp == d.end() || itSdp->second.type() != Value::Type::String) return;
             const std::string sdp = itSdp->second.asString();
