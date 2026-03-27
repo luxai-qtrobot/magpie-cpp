@@ -107,7 +107,10 @@ struct WebRtcConnection::Impl {
             if (ice.username.empty()) {
                 config.iceServers.emplace_back(ice.url);
             } else {
-                config.iceServers.emplace_back(ice.url, ice.username, ice.password);
+                rtc::IceServer srv(ice.url);
+                srv.username = ice.username;
+                srv.password = ice.password;
+                config.iceServers.push_back(std::move(srv));
             }
         }
 
@@ -231,9 +234,10 @@ struct WebRtcConnection::Impl {
 
         // Data channel (offerer creates it)
         rtc::DataChannelInit dcInit;
-        dcInit.ordered = options.dataChannelOrdered;
+        dcInit.reliability.unordered = !options.dataChannelOrdered;
         if (options.dataChannelMaxRetransmits >= 0) {
-            dcInit.maxRetransmits = static_cast<unsigned int>(options.dataChannelMaxRetransmits);
+            dcInit.reliability.type  = rtc::Reliability::Type::Rexmit;
+            dcInit.reliability.rexmit = static_cast<int>(options.dataChannelMaxRetransmits);
         }
         dc = pc->createDataChannel("magpie", dcInit);
         setupDataChannel(dc);
@@ -242,8 +246,9 @@ struct WebRtcConnection::Impl {
         // When false, video/audio goes through the reliable magpie DC instead.
         if (options.useMediaChannels) {
             rtc::DataChannelInit mediaDcInit;
-            mediaDcInit.ordered        = false;
-            mediaDcInit.maxRetransmits = 0;
+            mediaDcInit.reliability.unordered = true;
+            mediaDcInit.reliability.type      = rtc::Reliability::Type::Rexmit;
+            mediaDcInit.reliability.rexmit    = 0;
             mediaDc = pc->createDataChannel("magpie-media", mediaDcInit);
             setupMediaChannel(mediaDc);
         }
