@@ -441,6 +441,8 @@ WebRTC transport enables **P2P communication over the internet** — no broker i
 
 Signaling (SDP offer/answer + ICE candidates) is exchanged via MQTT.  Role negotiation (offerer vs answerer) is fully automatic.
 
+> **Note — no RTP media tracks in C++.**  The C++ implementation uses [libdatachannel](https://github.com/paullouisageneau/libdatachannel), which provides data channels only.  There is no RTP/SRTP media track stack (no equivalent of aiortc or a browser's `RTCPeerConnection` media pipeline).  Video and audio frames are always transported over WebRTC data channels — either the `magpie-media` unreliable channel (`useMediaChannels=true`, default) or the reliable `magpie` channel (`useMediaChannels=false`).  When interoperating with a Python or JS peer that has `use_media_channels=True` and sends real RTP video tracks, set `useMediaChannels=false` on the C++ side so that both peers agree to use the data-channel path for video/audio.
+
 `WebRtcPublisher` routes internally based on frame type and the `useMediaChannels` option (default `true`):
 
 | Frame type | `useMediaChannels=true` | `useMediaChannels=false` |
