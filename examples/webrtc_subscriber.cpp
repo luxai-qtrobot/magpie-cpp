@@ -2,7 +2,7 @@
 // webrtc_subscriber.cpp
 //
 // Connects to a remote peer via WebRTC (signaling over MQTT) and prints
-// every StringFrame received on "magpie/test/+".
+// every StringFrame received on "magpie/test/topic".
 //
 // Build:  cmake -DMAGPIE_WITH_WEBRTC=ON -DMAGPIE_WITH_MQTT=ON ..
 // Run:    ./example_webrtc_subscriber
@@ -42,12 +42,12 @@ int main() {
         signalConn->disconnect();
         return 1;
     }
-    Logger::info("Connected! Subscribing to 'magpie/test/+'.");
+    Logger::info("Connected! Subscribing to 'magpie/test/topic'.");
 
     // ------------------------------------------------------------------
     // 3. Create subscriber and receive frames
     // ------------------------------------------------------------------
-    WebRtcSubscriber sub(conn, "magpie/test/+");
+    WebRtcSubscriber sub(conn, "magpie/test/topic");
 
     while (conn->isConnected()) {
         std::unique_ptr<Frame> frame;
