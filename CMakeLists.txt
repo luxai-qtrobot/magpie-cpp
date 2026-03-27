@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.16)
 project(magpie
     VERSION 0.6.3
     LANGUAGES CXX
@@ -222,23 +222,46 @@ if(MAGPIE_WITH_WEBRTC)
         message(FATAL_ERROR "MAGPIE_WITH_WEBRTC requires MAGPIE_WITH_MQTT=ON")
     endif()
 
-    # ---- Find libdatachannel ----
+    # ---- Find or fetch libdatachannel ----
+    # Prefer a system-installed copy; if not found, build from source as static libs
+    # so they get absorbed directly into libmagpie-webrtc.so (no extra .so to ship).
     find_package(LibDataChannel CONFIG QUIET)
     if(LibDataChannel_FOUND)
-        set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel)
-        message(STATUS "Found libdatachannel via CMake config")
+        if(TARGET LibDataChannel::LibDataChannel_static)
+            set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel_static)
+        else()
+            set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel)
+        endif()
+        message(STATUS "Found libdatachannel via CMake config: ${MAGPIE_LIBDATACHANNEL_TARGET}")
     else()
-        find_library(LIBDATACHANNEL_LIB    NAMES datachannel REQUIRED)
-        find_path   (LIBDATACHANNEL_INCLUDE NAMES rtc/rtc.hpp REQUIRED)
+        message(STATUS "libdatachannel not found on system -- fetching and building from source (static)")
 
-        add_library(LibDataChannel::LibDataChannel UNKNOWN IMPORTED)
-        set_target_properties(LibDataChannel::LibDataChannel PROPERTIES
-            IMPORTED_LOCATION             "${LIBDATACHANNEL_LIB}"
-            INTERFACE_INCLUDE_DIRECTORIES "${LIBDATACHANNEL_INCLUDE}"
+        include(FetchContent)
+        FetchContent_Declare(
+            libdatachannel
+            GIT_REPOSITORY    https://github.com/paullouisageneau/libdatachannel.git
+            GIT_TAG           v0.21.2
+            GIT_SUBMODULES_RECURSE ON   # requires CMake >= 3.17; silently ignored on 3.16
         )
-        set(MAGPIE_LIBDATACHANNEL_TARGET LibDataChannel::LibDataChannel)
-        message(STATUS "Found libdatachannel via manual search: ${LIBDATACHANNEL_LIB}")
+
+        # Build libdatachannel and all its sub-dependencies (juice, usrsctp, libsrtp, …)
+        # as static libraries so they get linked into our shared .so at build time.
+        # We use a normal (non-cache) variable so it shadows any user-supplied cache
+        # value only for the FetchContent subdirectory without permanently overriding it.
+        set(BUILD_SHARED_LIBS OFF)
+        set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+        set(NO_TESTS    ON CACHE BOOL "" FORCE)
+
+        FetchContent_MakeAvailable(libdatachannel)
+
+        # When built via FetchContent the static target is always 'datachannel-static'
+        set(MAGPIE_LIBDATACHANNEL_TARGET datachannel-static)
     endif()
+
+    # turbojpeg is used by the WebRTC layer for image encoding.
+    # find_library caches its result, so this is a no-op if MAGPIE_WITH_VIDEO already
+    # located the library in the same CMake run.
+    find_library(TURBOJPEG_LIBRARY turbojpeg REQUIRED)
 
     add_library(magpie_webrtc SHARED
         src/transport/webrtc/webrtc_connection.cpp
@@ -255,6 +278,7 @@ if(MAGPIE_WITH_WEBRTC)
             magpie_mqtt
         PRIVATE
             ${MAGPIE_LIBDATACHANNEL_TARGET}
+            ${TURBOJPEG_LIBRARY}
     )
 
     target_compile_definitions(magpie_webrtc PUBLIC MAGPIE_WITH_WEBRTC)
@@ -451,6 +475,7 @@ set(CPACK_DEBIAN_MQTT_PACKAGE_DEPENDS      "libmagpie (>= ${PROJECT_VERSION}), l
 set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_WEBRTC_PACKAGE_SHLIBDEPS  OFF)
-set(CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS    "libmagpie (>= ${PROJECT_VERSION}), libmagpie-mqtt (>= ${PROJECT_VERSION}), libdatachannel (>= 0.18)")
+# libdatachannel is statically linked into this package, so no runtime dep on it.
+set(CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS    "libmagpie (>= ${PROJECT_VERSION}), libmagpie-mqtt (>= ${PROJECT_VERSION}), libturbojpeg0 (>= 1.0)")
 
 include(CPack)
