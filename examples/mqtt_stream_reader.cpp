@@ -1,18 +1,18 @@
 //
-// mqtt_subscriber.cpp
+// mqtt_stream_reader.cpp
 //
 // Subscribes to an MQTT topic and prints received StringFrames.
 // Supports wildcards: '+' (single level) and '#' (multi-level).
 //
 // Build:  cmake -DMAGPIE_WITH_MQTT=ON ..
-// Run:    ./example_mqtt_subscriber
+// Run:    ./example_mqtt_stream_reader
 //
-// Pair with: example_mqtt_publisher
+// Pair with: example_mqtt_stream_writer
 //
 
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/mqtt_subscriber.hpp>
+#include <magpie/transport/mqtt_stream_reader.hpp>
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -32,9 +32,9 @@ int main() {
     // ------------------------------------------------------------------
     // 2. Subscribe to a topic (wildcard: receives everything under magpie/test/)
     // ------------------------------------------------------------------
-    MqttSubscriber sub(conn, "magpie/test/+", /*serializer=*/nullptr, /*queueSize=*/10);
+    MqttStreamReader sub(conn, "magpie/test/+", /*serializer=*/nullptr, /*queueSize=*/10);
 
-    Logger::info("MQTT subscriber started. Waiting for frames on 'magpie/test/+'...");
+    Logger::info("MQTT reader started. Waiting for frames on 'magpie/test/+'...");
 
     while (true) {
         std::unique_ptr<Frame> frame;
@@ -45,14 +45,14 @@ int main() {
                 // Try to cast to StringFrame
                 auto* sf = dynamic_cast<StringFrame*>(frame.get());
                 if (sf) {
-                    Logger::info("Subscriber [" + topic + "]: '" + sf->value() + "'");
+                    Logger::info("Reader [" + topic + "]: '" + sf->value() + "'");
                 } else {
-                    Logger::info("Subscriber [" + topic + "]: received frame type '" +
+                    Logger::info("Reader [" + topic + "]: received frame type '" +
                                  frame->name() + "'");
                 }
             }
         } catch (const TimeoutError&) {
-            Logger::debug("Subscriber: timeout, still waiting...");
+            Logger::debug("Reader: timeout, still waiting...");
         }
     }
 

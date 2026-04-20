@@ -1,4 +1,4 @@
-#include <magpie/transport/webrtc_publisher.hpp>
+#include <magpie/transport/webrtc_stream_writer.hpp>
 
 #include <magpie/frames/image_frame.hpp>
 #include <magpie/frames/audio_frame.hpp>
@@ -8,14 +8,14 @@
 
 namespace magpie {
 
-WebRtcPublisher::WebRtcPublisher(std::shared_ptr<WebRtcConnection> connection,
+WebRtcStreamWriter::WebRtcStreamWriter(std::shared_ptr<WebRtcConnection> connection,
                                    std::shared_ptr<Serializer>       serializer,
                                    int                               queueSize)
-    : StreamWriter("WebRtcPublisher", queueSize)
+    : StreamWriter("WebRtcStreamWriter", queueSize)
     , connection_(std::move(connection))
 {
     if (!connection_) {
-        throw std::invalid_argument("WebRtcPublisher: connection is null");
+        throw std::invalid_argument("WebRtcStreamWriter: connection is null");
     }
 
     if (!serializer) {
@@ -23,14 +23,14 @@ WebRtcPublisher::WebRtcPublisher(std::shared_ptr<WebRtcConnection> connection,
     }
     serializer_ = std::move(serializer);
 
-    Logger::debug("WebRtcPublisher: created (queueSize=" + std::to_string(queueSize) + ")");
+    Logger::debug("WebRtcStreamWriter: created (queueSize=" + std::to_string(queueSize) + ")");
 }
 
-WebRtcPublisher::~WebRtcPublisher() {
+WebRtcStreamWriter::~WebRtcStreamWriter() {
     close();
 }
 
-void WebRtcPublisher::transportWrite(const Frame& frame, const std::string& topic) {
+void WebRtcStreamWriter::transportWrite(const Frame& frame, const std::string& topic) {
     if (!connection_) return;
 
     const bool useMedia = connection_->useMediaChannels();
@@ -79,7 +79,7 @@ void WebRtcPublisher::transportWrite(const Frame& frame, const std::string& topi
     }
 
     if (topic.empty()) {
-        Logger::warning("WebRtcPublisher: write() called without a topic — dropping.");
+        Logger::warning("WebRtcStreamWriter: write() called without a topic — dropping.");
         return;
     }
 
@@ -95,13 +95,13 @@ void WebRtcPublisher::transportWrite(const Frame& frame, const std::string& topi
 
         connection_->sendData(Value::fromDict(env));
     } catch (const std::exception& e) {
-        Logger::warning(std::string("WebRtcPublisher: write failed: ") + e.what());
+        Logger::warning(std::string("WebRtcStreamWriter: write failed: ") + e.what());
     }
 }
 
-void WebRtcPublisher::transportClose() {
+void WebRtcStreamWriter::transportClose() {
     // Connection is shared — closing the publisher does not disconnect.
-    Logger::debug("WebRtcPublisher: closed (connection remains open).");
+    Logger::debug("WebRtcStreamWriter: closed (connection remains open).");
 }
 
 } // namespace magpie

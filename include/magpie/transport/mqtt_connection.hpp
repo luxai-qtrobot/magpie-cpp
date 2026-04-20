@@ -17,7 +17,7 @@ namespace magpie {
  * MqttConnection
  *
  * Manages a single shared MQTT broker connection using the Paho C++ library.
- * Multiple MqttPublisher, MqttSubscriber, MqttRpcRequester, and MqttRpcResponder
+ * Multiple MqttStreamWriter, MqttStreamReader, MqttRpcRequester, and MqttRpcResponder
  * instances can share one MqttConnection to reuse a single TCP/TLS connection.
  *
  * URI schemes:
@@ -29,7 +29,7 @@ namespace magpie {
  * @code
  * auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
  * conn->connect();
- * // ... use with MqttPublisher / MqttSubscriber ...
+ * // ... use with MqttStreamWriter / MqttStreamReader ...
  * conn->disconnect();
  * @endcode
  */

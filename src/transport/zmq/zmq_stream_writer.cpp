@@ -1,5 +1,5 @@
 
-#include <magpie/transport/zmq_publisher.hpp>
+#include <magpie/transport/zmq_stream_writer.hpp>
 #include <magpie/serializer/msgpack_serializer.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -11,11 +11,11 @@
 
 namespace magpie {
 
-bool ZmqPublisher::startsWith(const std::string& s, const std::string& prefix) {
+bool ZmqStreamWriter::startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-zmq_ctx_t* ZmqPublisher::sharedInprocContext() {
+zmq_ctx_t* ZmqStreamWriter::sharedInprocContext() {
     // Shared context for inproc:// endpoints (similar to Python Context.instance()).
     static zmq_ctx_t* ctx = []() -> zmq_ctx_t* {
         void* raw = zmq_ctx_new();
@@ -24,12 +24,12 @@ zmq_ctx_t* ZmqPublisher::sharedInprocContext() {
     return ctx;
 }
 
-ZmqPublisher::ZmqPublisher(const std::string& endpoint,                           
+ZmqStreamWriter::ZmqStreamWriter(const std::string& endpoint,                           
                            int queueSize,
                            bool bind,
                            const std::string& delivery,
                             std::shared_ptr<Serializer> serializer)
-    : StreamWriter("ZmqPublisher", queueSize)
+    : StreamWriter("ZmqStreamWriter", queueSize)
     , endpoint_{endpoint}
     , delivery_{delivery}    
 {
@@ -49,15 +49,15 @@ ZmqPublisher::ZmqPublisher(const std::string& endpoint,
     }
 
     if (!context_) {
-        Logger::error("ZmqPublisher: failed to create ZeroMQ context");
-        throw std::runtime_error("ZmqPublisher: zmq_ctx_new failed");
+        Logger::error("ZmqStreamWriter: failed to create ZeroMQ context");
+        throw std::runtime_error("ZmqStreamWriter: zmq_ctx_new failed");
     }
 
     socket_ = zmq_socket(context_, ZMQ_PUB);
     if (!socket_) {
-        Logger::error("ZmqPublisher: failed to create PUB socket");
+        Logger::error("ZmqStreamWriter: failed to create PUB socket");
         if (ownsContext_) zmq_ctx_term(context_);
-        throw std::runtime_error("ZmqPublisher: zmq_socket failed");
+        throw std::runtime_error("ZmqStreamWriter: zmq_socket failed");
     }
 
     // Delivery mode
@@ -74,27 +74,27 @@ ZmqPublisher::ZmqPublisher(const std::string& endpoint,
     }
 
     if (rc != 0) {
-        Logger::error("ZmqPublisher: bind/connect failed for endpoint " + endpoint_);
+        Logger::error("ZmqStreamWriter: bind/connect failed for endpoint " + endpoint_);
         zmq_close(socket_);
         socket_ = nullptr;
         if (ownsContext_) zmq_ctx_term(context_);
-        throw std::runtime_error("ZmqPublisher: bind/connect failed");
+        throw std::runtime_error("ZmqStreamWriter: bind/connect failed");
     }
 
-    Logger::debug("ZmqPublisher is ready (" +
+    Logger::debug("ZmqStreamWriter is ready (" +
                   std::string(bind ? "bound" : "connected") +
                   " at " + endpoint_ +
                   ", delivery=" + delivery_ + ")");
 }
 
-ZmqPublisher::~ZmqPublisher() {
+ZmqStreamWriter::~ZmqStreamWriter() {
     close();
 }
 
-void ZmqPublisher::transportWrite(const Frame& frame,
+void ZmqStreamWriter::transportWrite(const Frame& frame,
                                   const std::string& topic) {
     if (!socket_) {
-        Logger::warning("ZmqPublisher::transportWrite called with null socket");
+        Logger::warning("ZmqStreamWriter::transportWrite called with null socket");
         return;
     }
 
@@ -132,7 +132,7 @@ void ZmqPublisher::transportWrite(const Frame& frame,
 
         if (rc == -1) {
             zmq_msg_close(&payloadMsg);
-            Logger::warning("ZmqPublisher: failed to send topic part");
+            Logger::warning("ZmqStreamWriter: failed to send topic part");
             return;
         }
 
@@ -140,28 +140,28 @@ void ZmqPublisher::transportWrite(const Frame& frame,
         zmq_msg_close(&payloadMsg);
 
         if (rc == -1) {
-            Logger::warning("ZmqPublisher: failed to send payload part");
+            Logger::warning("ZmqStreamWriter: failed to send payload part");
         }
     } catch (const std::exception& e) {
-        Logger::warning(std::string("ZmqPublisher write failed with: ") + e.what());
+        Logger::warning(std::string("ZmqStreamWriter write failed with: ") + e.what());
     } catch (...) {
-        Logger::warning("ZmqPublisher write failed with unknown exception");
+        Logger::warning("ZmqStreamWriter write failed with unknown exception");
     }
 }
 
-void ZmqPublisher::transportClose() {
-    Logger::debug("ZmqPublisher is closing.");
+void ZmqStreamWriter::transportClose() {
+    Logger::debug("ZmqStreamWriter is closing.");
 
     if (socket_) {
         if (zmq_close(socket_) != 0) {
-            Logger::warning("ZmqPublisher socket close error");
+            Logger::warning("ZmqStreamWriter socket close error");
         }
         socket_ = nullptr;
     }
 
     if (context_ && ownsContext_) {
         if (zmq_ctx_term(context_) != 0) {
-            Logger::warning("ZmqPublisher context close error");
+            Logger::warning("ZmqStreamWriter context close error");
         }
         context_ = nullptr;
     }

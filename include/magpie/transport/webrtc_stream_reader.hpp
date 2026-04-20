@@ -13,16 +13,16 @@
 
 namespace magpie {
 
-class WebRtcSubscriber : public StreamReader {
+class WebRtcStreamReader : public StreamReader {
 public:
     static constexpr const char* VIDEO_TOPIC = "video";
     static constexpr const char* AUDIO_TOPIC = "audio";
 
-    WebRtcSubscriber(std::shared_ptr<WebRtcConnection> connection,
+    WebRtcStreamReader(std::shared_ptr<WebRtcConnection> connection,
                      const std::string&                topicFilter,
                      int                               queueSize = 10);
 
-    ~WebRtcSubscriber() override;
+    ~WebRtcStreamReader() override;
 
 protected:
     bool transportReadBlocking(std::unique_ptr<Frame>& outFrame,

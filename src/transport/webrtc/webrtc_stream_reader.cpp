@@ -1,4 +1,4 @@
-#include <magpie/transport/webrtc_subscriber.hpp>
+#include <magpie/transport/webrtc_stream_reader.hpp>
 
 #include <magpie/frames/image_frame.hpp>
 #include <magpie/frames/audio_frame.hpp>
@@ -10,17 +10,17 @@
 
 namespace magpie {
 
-WebRtcSubscriber::WebRtcSubscriber(std::shared_ptr<WebRtcConnection> connection,
+WebRtcStreamReader::WebRtcStreamReader(std::shared_ptr<WebRtcConnection> connection,
                                      const std::string&                topicFilter,
                                      int                               queueSize)
-    : StreamReader("WebRtcSubscriber", queueSize)
+    : StreamReader("WebRtcStreamReader", queueSize)
     , connection_(std::move(connection))
     , topicFilter_(topicFilter)
     , isVideoTopic_(topicFilter == VIDEO_TOPIC)
     , isAudioTopic_(topicFilter == AUDIO_TOPIC)
 {
     if (!connection_) {
-        throw std::invalid_argument("WebRtcSubscriber: connection is null");
+        throw std::invalid_argument("WebRtcStreamReader: connection is null");
     }
 
     if (isVideoTopic_) {
@@ -41,15 +41,15 @@ WebRtcSubscriber::WebRtcSubscriber(std::shared_ptr<WebRtcConnection> connection,
             });
     }
 
-    Logger::debug("WebRtcSubscriber: subscribed to '" + topicFilter_ +
+    Logger::debug("WebRtcStreamReader: subscribed to '" + topicFilter_ +
                   "' (queueSize=" + std::to_string(queueSize) + ")");
 }
 
-WebRtcSubscriber::~WebRtcSubscriber() {
+WebRtcStreamReader::~WebRtcStreamReader() {
     close();
 }
 
-void WebRtcSubscriber::onVideoFrame(const Value& frameDict) {
+void WebRtcStreamReader::onVideoFrame(const Value& frameDict) {
     if (dataClosed_.load()) return;
     try {
         if (frameDict.type() != Value::Type::Dict) return;
@@ -57,11 +57,11 @@ void WebRtcSubscriber::onVideoFrame(const Value& frameDict) {
         if (!framePtr) return;
         enqueue(std::move(framePtr), topicFilter_);
     } catch (const std::exception& e) {
-        Logger::warning(std::string("WebRtcSubscriber: video frame error: ") + e.what());
+        Logger::warning(std::string("WebRtcStreamReader: video frame error: ") + e.what());
     }
 }
 
-void WebRtcSubscriber::onAudioFrame(const Value& frameDict) {
+void WebRtcStreamReader::onAudioFrame(const Value& frameDict) {
     if (dataClosed_.load()) return;
     try {
         if (frameDict.type() != Value::Type::Dict) return;
@@ -69,29 +69,29 @@ void WebRtcSubscriber::onAudioFrame(const Value& frameDict) {
         if (!framePtr) return;
         enqueue(std::move(framePtr), topicFilter_);
     } catch (const std::exception& e) {
-        Logger::warning(std::string("WebRtcSubscriber: audio frame error: ") + e.what());
+        Logger::warning(std::string("WebRtcStreamReader: audio frame error: ") + e.what());
     }
 }
 
-void WebRtcSubscriber::onDataMessage(const Value& payload, const std::string& topic) {
+void WebRtcStreamReader::onDataMessage(const Value& payload, const std::string& topic) {
     if (dataClosed_.load()) return;
     try {
         if (payload.type() != Value::Type::Dict) {
-            Logger::warning("WebRtcSubscriber: payload is not a dict, dropping");
+            Logger::warning("WebRtcStreamReader: payload is not a dict, dropping");
             return;
         }
         auto framePtr = Frame::fromDict(payload.asDict());
         if (!framePtr) {
-            Logger::warning("WebRtcSubscriber: Frame::fromDict returned null, dropping");
+            Logger::warning("WebRtcStreamReader: Frame::fromDict returned null, dropping");
             return;
         }
         enqueue(std::move(framePtr), topic);
     } catch (const std::exception& e) {
-        Logger::warning(std::string("WebRtcSubscriber: frame reconstruction error: ") + e.what());
+        Logger::warning(std::string("WebRtcStreamReader: frame reconstruction error: ") + e.what());
     }
 }
 
-void WebRtcSubscriber::enqueue(std::unique_ptr<Frame> frame, const std::string& topic) {
+void WebRtcStreamReader::enqueue(std::unique_ptr<Frame> frame, const std::string& topic) {
     {
         std::lock_guard<std::mutex> lk(dataMutex_);
         dataQueue_.emplace_back(std::move(frame), topic);
@@ -99,7 +99,7 @@ void WebRtcSubscriber::enqueue(std::unique_ptr<Frame> frame, const std::string& 
     dataCv_.notify_one();
 }
 
-bool WebRtcSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
+bool WebRtcStreamReader::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
                                                std::string&            outTopic,
                                                double                  timeoutSec) {
     if (dataClosed_.load()) return false;
@@ -134,8 +134,8 @@ bool WebRtcSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
     return true;
 }
 
-void WebRtcSubscriber::transportClose() {
-    Logger::debug("WebRtcSubscriber: closing (topic='" + topicFilter_ + "')");
+void WebRtcStreamReader::transportClose() {
+    Logger::debug("WebRtcStreamReader: closing (topic='" + topicFilter_ + "')");
 
     dataClosed_.store(true);
     dataCv_.notify_all();

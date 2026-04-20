@@ -14,14 +14,14 @@ struct zmq_ctx_t;
 namespace magpie {
 
 /**
- * ZmqSubscriber
+ * ZmqStreamReader
  *
- * C++ equivalent of Python ZMQSubscriber.
+ * C++ equivalent of Python ZmqStreamReader.
  * Subscribes to one or more topics and yields Frame objects.
  */
-class ZmqSubscriber : public StreamReader {
+class ZmqStreamReader : public StreamReader {
 public:
-    ZmqSubscriber(const std::string& endpoint,
+    ZmqStreamReader(const std::string& endpoint,
                   const std::vector<std::string>& topics,                  
                   int queueSize = 10,
                   bool bind = false,
@@ -29,17 +29,17 @@ public:
                   std::shared_ptr<Serializer> serializer = nullptr);
 
     // Convenience ctor: single topic string (empty = all topics)
-    ZmqSubscriber(const std::string& endpoint,
+    ZmqStreamReader(const std::string& endpoint,
                   const std::string& topic,                  
                   int queueSize = 10,
                   bool bind = false,
                   const std::string& delivery = "reliable",
                   std::shared_ptr<Serializer> serializer=nullptr);
 
-    ~ZmqSubscriber() override;
+    ~ZmqStreamReader() override;
 
-    ZmqSubscriber(const ZmqSubscriber&)            = delete;
-    ZmqSubscriber& operator=(const ZmqSubscriber&) = delete;
+    ZmqStreamReader(const ZmqStreamReader&)            = delete;
+    ZmqStreamReader& operator=(const ZmqStreamReader&) = delete;
 
 protected:
     bool transportReadBlocking(std::unique_ptr<Frame>& outFrame,

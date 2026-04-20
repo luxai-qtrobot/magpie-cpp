@@ -11,7 +11,7 @@
 namespace magpie {
 
 /**
- * MqttPublisher
+ * MqttStreamWriter
  *
  * Publishes Frame objects to an MQTT broker via a shared MqttConnection.
  * Extends StreamWriter so frames can be queued and sent from a background thread.
@@ -20,7 +20,7 @@ namespace magpie {
  * auto conn = std::make_shared<MqttConnection>("mqtt://localhost:1883");
  * conn->connect();
  *
- * MqttPublisher pub(conn, nullptr, 10);
+ * MqttStreamWriter pub(conn, nullptr, 10);
  * StringFrame f("hello");
  * pub.write(f, "sensors/temperature");
  *
@@ -28,7 +28,7 @@ namespace magpie {
  * conn->disconnect();
  * @endcode
  */
-class MqttPublisher : public StreamWriter {
+class MqttStreamWriter : public StreamWriter {
 public:
     /**
      * @param connection   Shared, already-connected MqttConnection.
@@ -37,16 +37,16 @@ public:
      * @param qos          MQTT QoS override; -1 uses connection default.
      * @param retain       MQTT retain flag override; uses connection default if not set.
      */
-    explicit MqttPublisher(std::shared_ptr<MqttConnection> connection,
+    explicit MqttStreamWriter(std::shared_ptr<MqttConnection> connection,
                            std::shared_ptr<Serializer>     serializer = nullptr,
                            int                             queueSize  = 10,
                            int                             qos        = -1,
                            int                             retain     = -1);
 
-    ~MqttPublisher() override;
+    ~MqttStreamWriter() override;
 
-    MqttPublisher(const MqttPublisher&)            = delete;
-    MqttPublisher& operator=(const MqttPublisher&) = delete;
+    MqttStreamWriter(const MqttStreamWriter&)            = delete;
+    MqttStreamWriter& operator=(const MqttStreamWriter&) = delete;
 
 protected:
     void transportWrite(const Frame& frame, const std::string& topic) override;

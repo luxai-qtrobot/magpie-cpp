@@ -1,4 +1,4 @@
-#include <magpie/transport/mqtt_subscriber.hpp>
+#include <magpie/transport/mqtt_stream_reader.hpp>
 
 #include <magpie/serializer/msgpack_serializer.hpp>
 #include <magpie/serializer/value.hpp>
@@ -9,17 +9,17 @@
 
 namespace magpie {
 
-MqttSubscriber::MqttSubscriber(std::shared_ptr<MqttConnection> connection,
+MqttStreamReader::MqttStreamReader(std::shared_ptr<MqttConnection> connection,
                                  const std::string&              topicFilter,
                                  std::shared_ptr<Serializer>     serializer,
                                  int                             queueSize,
                                  int                             qos)
-    : StreamReader("MqttSubscriber", queueSize)
+    : StreamReader("MqttStreamReader", queueSize)
     , connection_(std::move(connection))
     , topicFilter_(topicFilter)
 {
     if (!connection_) {
-        throw std::invalid_argument("MqttSubscriber: connection is null");
+        throw std::invalid_argument("MqttStreamReader: connection is null");
     }
 
     if (!serializer) {
@@ -35,15 +35,15 @@ MqttSubscriber::MqttSubscriber(std::shared_ptr<MqttConnection> connection,
         },
         qos);
 
-    Logger::debug("MqttSubscriber: subscribed to '" + topicFilter_ +
+    Logger::debug("MqttStreamReader: subscribed to '" + topicFilter_ +
                   "' (queueSize=" + std::to_string(queueSize) + ")");
 }
 
-MqttSubscriber::~MqttSubscriber() {
+MqttStreamReader::~MqttStreamReader() {
     close();
 }
 
-void MqttSubscriber::onMessage(const std::string& topic, const uint8_t* data, std::size_t size) {
+void MqttStreamReader::onMessage(const std::string& topic, const uint8_t* data, std::size_t size) {
     if (mqttClosed_.load()) return;
 
     std::vector<uint8_t> payload(data, data + size);
@@ -54,7 +54,7 @@ void MqttSubscriber::onMessage(const std::string& topic, const uint8_t* data, st
     mqttCv_.notify_one();
 }
 
-bool MqttSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
+bool MqttStreamReader::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
                                              std::string&            outTopic,
                                              double                  timeoutSec) {
     if (mqttClosed_.load()) {
@@ -114,8 +114,8 @@ bool MqttSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
     }
 }
 
-void MqttSubscriber::transportClose() {
-    Logger::debug("MqttSubscriber: closing (topic='" + topicFilter_ + "')");
+void MqttStreamReader::transportClose() {
+    Logger::debug("MqttStreamReader: closing (topic='" + topicFilter_ + "')");
 
     mqttClosed_.store(true);
     mqttCv_.notify_all();

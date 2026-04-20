@@ -1,18 +1,18 @@
 //
-// mqtt_publisher.cpp
+// mqtt_stream_writer.cpp
 //
 // Publishes a StringFrame to an MQTT broker every second.
 // Connects to the public HiveMQ broker by default.
 //
 // Build:  cmake -DMAGPIE_WITH_MQTT=ON ..
-// Run:    ./example_mqtt_publisher
+// Run:    ./example_mqtt_stream_writer
 //
-// Pair with: example_mqtt_subscriber
+// Pair with: example_mqtt_stream_reader
 //
 
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/mqtt_publisher.hpp>
+#include <magpie/transport/mqtt_stream_writer.hpp>
 #include <magpie/utils/logger.hpp>
 
 #include <chrono>
@@ -34,16 +34,16 @@ int main() {
     conn->connect(10.0);
 
     // ------------------------------------------------------------------
-    // 2. Create a publisher (queueSize=10: async background thread)
+    // 2. Create a writer (queueSize=10: async background thread)
     // ------------------------------------------------------------------
-    MqttPublisher pub(conn, /*serializer=*/nullptr, /*queueSize=*/10);
+    MqttStreamWriter pub(conn, /*serializer=*/nullptr, /*queueSize=*/10);
 
-    Logger::info("MQTT publisher started. Publishing to 'magpie/test/topic'.");
+    Logger::info("MQTT writer started. Publishing to 'magpie/test/topic'.");
 
     int count = 0;
     while (running) {
         StringFrame frame("hello from C++ #" + std::to_string(count++));
-        Logger::info("Publisher: sending '" + frame.value() + "'");
+        Logger::info("Writer: sending '" + frame.value() + "'");
         pub.write(frame, "magpie/test/topic");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }

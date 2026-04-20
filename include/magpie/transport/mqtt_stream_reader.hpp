@@ -18,7 +18,7 @@
 namespace magpie {
 
 /**
- * MqttSubscriber
+ * MqttStreamReader
  *
  * Subscribes to an MQTT topic (or wildcard pattern) and yields Frame objects.
  * Extends StreamReader so frames are buffered in a background queue.
@@ -31,7 +31,7 @@ namespace magpie {
  * auto conn = std::make_shared<MqttConnection>("mqtt://localhost:1883");
  * conn->connect();
  *
- * MqttSubscriber sub(conn, "sensors/+");
+ * MqttStreamReader sub(conn, "sensors/+");
  * std::unique_ptr<Frame> frame;
  * std::string topic;
  * if (sub.read(frame, topic, 5.0)) {
@@ -41,7 +41,7 @@ namespace magpie {
  * conn->disconnect();
  * @endcode
  */
-class MqttSubscriber : public StreamReader {
+class MqttStreamReader : public StreamReader {
 public:
     /**
      * @param connection   Shared, already-connected MqttConnection.
@@ -50,16 +50,16 @@ public:
      * @param queueSize    StreamReader queue depth (>0 recommended for MQTT).
      * @param qos          Subscribe QoS override; -1 uses connection default.
      */
-    explicit MqttSubscriber(std::shared_ptr<MqttConnection> connection,
+    explicit MqttStreamReader(std::shared_ptr<MqttConnection> connection,
                              const std::string&              topicFilter,
                              std::shared_ptr<Serializer>     serializer = nullptr,
                              int                             queueSize  = 10,
                              int                             qos        = -1);
 
-    ~MqttSubscriber() override;
+    ~MqttStreamReader() override;
 
-    MqttSubscriber(const MqttSubscriber&)            = delete;
-    MqttSubscriber& operator=(const MqttSubscriber&) = delete;
+    MqttStreamReader(const MqttStreamReader&)            = delete;
+    MqttStreamReader& operator=(const MqttStreamReader&) = delete;
 
 protected:
     bool transportReadBlocking(std::unique_ptr<Frame>& outFrame,

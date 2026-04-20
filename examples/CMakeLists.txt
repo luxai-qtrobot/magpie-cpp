@@ -1,11 +1,11 @@
 add_executable(example_utils utils.cpp)
 target_link_libraries(example_utils PRIVATE magpie::core)
 
-add_executable(example_zmq_publisher zmq_publisher.cpp)
-target_link_libraries(example_zmq_publisher PRIVATE magpie::core)
+add_executable(example_zmq_stream_writer zmq_stream_writer.cpp)
+target_link_libraries(example_zmq_stream_writer PRIVATE magpie::core)
 
-add_executable(example_zmq_subscriber zmq_subscriber.cpp)
-target_link_libraries(example_zmq_subscriber PRIVATE magpie::core)
+add_executable(example_zmq_stream_reader zmq_stream_reader.cpp)
+target_link_libraries(example_zmq_stream_reader PRIVATE magpie::core)
 
 add_executable(example_zmq_rpc_requester zmq_rpc_requester.cpp)
 target_link_libraries(example_zmq_rpc_requester PRIVATE magpie::core)
@@ -29,11 +29,11 @@ if(MAGPIE_WITH_AUDIO)
 endif()
 
 if(MAGPIE_WITH_MQTT)
-    add_executable(example_mqtt_publisher mqtt_publisher.cpp)
-    target_link_libraries(example_mqtt_publisher PRIVATE magpie::core magpie::mqtt)
+    add_executable(example_mqtt_stream_writer mqtt_stream_writer.cpp)
+    target_link_libraries(example_mqtt_stream_writer PRIVATE magpie::core magpie::mqtt)
 
-    add_executable(example_mqtt_subscriber mqtt_subscriber.cpp)
-    target_link_libraries(example_mqtt_subscriber PRIVATE magpie::core magpie::mqtt)
+    add_executable(example_mqtt_stream_reader mqtt_stream_reader.cpp)
+    target_link_libraries(example_mqtt_stream_reader PRIVATE magpie::core magpie::mqtt)
 
     add_executable(example_mqtt_rpc_requester mqtt_rpc_requester.cpp)
     target_link_libraries(example_mqtt_rpc_requester PRIVATE magpie::core magpie::mqtt)
@@ -48,11 +48,11 @@ if(MAGPIE_WITH_VIDEO)
 endif()
 
 if(MAGPIE_WITH_WEBRTC)
-    add_executable(example_webrtc_publisher webrtc_publisher.cpp)
-    target_link_libraries(example_webrtc_publisher PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    add_executable(example_webrtc_stream_writer webrtc_stream_writer.cpp)
+    target_link_libraries(example_webrtc_stream_writer PRIVATE magpie::core magpie::mqtt magpie::webrtc)
 
-    add_executable(example_webrtc_subscriber webrtc_subscriber.cpp)
-    target_link_libraries(example_webrtc_subscriber PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    add_executable(example_webrtc_stream_reader webrtc_stream_reader.cpp)
+    target_link_libraries(example_webrtc_stream_reader PRIVATE magpie::core magpie::mqtt magpie::webrtc)
 
     add_executable(example_webrtc_rpc_requester webrtc_rpc_requester.cpp)
     target_link_libraries(example_webrtc_rpc_requester PRIVATE magpie::core magpie::mqtt magpie::webrtc)

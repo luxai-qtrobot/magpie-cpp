@@ -1,20 +1,20 @@
 //
-// webrtc_subscriber.cpp
+// webrtc_stream_reader.cpp
 //
 // Connects to a remote peer via WebRTC (signaling over MQTT) and prints
 // every StringFrame received on "magpie/test/topic".
 //
 // Build:  cmake -DMAGPIE_WITH_WEBRTC=ON -DMAGPIE_WITH_MQTT=ON ..
-// Run:    ./example_webrtc_subscriber
+// Run:    ./example_webrtc_stream_reader
 //
-// Pair with: example_webrtc_publisher (or the Python/JS equivalent)
+// Pair with: example_webrtc_stream_writer (or the Python/JS equivalent)
 // Both sides must use the same broker URL and session_id.
 //
 
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_connection.hpp>
-#include <magpie/transport/webrtc_subscriber.hpp>
+#include <magpie/transport/webrtc_stream_reader.hpp>
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -38,16 +38,16 @@ int main() {
 
     Logger::info("Waiting for peer (session: magpie-cpp-demo) ...");
     if (!conn->connect(30.0)) {
-        Logger::error("No peer found within 30s — is the publisher running?");
+        Logger::error("No peer found within 30s — is the writer running?");
         signalConn->disconnect();
         return 1;
     }
     Logger::info("Connected! Subscribing to 'magpie/test/topic'.");
 
     // ------------------------------------------------------------------
-    // 3. Create subscriber and receive frames
+    // 3. Create reader and receive frames
     // ------------------------------------------------------------------
-    WebRtcSubscriber sub(conn, "magpie/test/topic");
+    WebRtcStreamReader sub(conn, "magpie/test/topic");
 
     while (conn->isConnected()) {
         std::unique_ptr<Frame> frame;
@@ -57,14 +57,14 @@ int main() {
             if (sub.read(frame, topic, /*timeoutSec=*/5.0)) {
                 auto* sf = dynamic_cast<StringFrame*>(frame.get());
                 if (sf) {
-                    Logger::info("Subscriber [" + topic + "]: '" + sf->value() + "'");
+                    Logger::info("Reader [" + topic + "]: '" + sf->value() + "'");
                 } else {
-                    Logger::info("Subscriber [" + topic + "]: received frame type '" +
+                    Logger::info("Reader [" + topic + "]: received frame type '" +
                                  frame->name() + "'");
                 }
             }
         } catch (const TimeoutError&) {
-            Logger::debug("Subscriber: timeout, still waiting...");
+            Logger::debug("Reader: timeout, still waiting...");
         }
     }
 

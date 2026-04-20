@@ -13,22 +13,22 @@ struct zmq_socket_t;  // forward for C API (actually void*, but this is clearer)
 namespace magpie {
 
 /**
- * ZmqPublisher
+ * ZmqStreamWriter
  *
- * C++ equivalent of Python ZMQPublisher.
+ * C++ equivalent of Python ZmqStreamWriter.
  * Publishes Frame objects to a ZeroMQ PUB socket using a Serializer.
  */
-class ZmqPublisher : public StreamWriter {
+class ZmqStreamWriter : public StreamWriter {
 public:
-    ZmqPublisher(const std::string& endpoint,                 
+    ZmqStreamWriter(const std::string& endpoint,                 
                  int queueSize = 0,           // default: direct write, no worker thread (for now)
                  bool bind = true,
                  const std::string& delivery = "reliable",
                 std::shared_ptr<Serializer> serializer = nullptr);
-    ~ZmqPublisher() override;
+    ~ZmqStreamWriter() override;
 
-    ZmqPublisher(const ZmqPublisher&)            = delete;
-    ZmqPublisher& operator=(const ZmqPublisher&) = delete;
+    ZmqStreamWriter(const ZmqStreamWriter&)            = delete;
+    ZmqStreamWriter& operator=(const ZmqStreamWriter&) = delete;
 
 protected:
     void transportWrite(const Frame& frame,

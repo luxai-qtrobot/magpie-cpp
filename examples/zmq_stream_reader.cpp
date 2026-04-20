@@ -1,6 +1,6 @@
 
 #include <magpie/frames/primitive_frames.hpp>
-#include <magpie/transport/zmq_subscriber.hpp>
+#include <magpie/transport/zmq_stream_reader.hpp>
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -14,7 +14,7 @@ int main() {
     Logger::setLevel("DEBUG");
 
     // Subscribe to /mytopic on localhost
-    ZmqSubscriber sub("tcp://127.0.0.1:5555",
+    ZmqStreamReader sub("tcp://127.0.0.1:5555",
                       "/mytopic",                      
                       /*queueSize=*/10,
                       /*bind=*/false,
@@ -27,26 +27,26 @@ int main() {
         try {
             bool ok = sub.read(frame, topic, /*timeoutSec=*/5.0);
             if (!ok) {
-                Logger::info("Subscriber: no frame (read returned false)");
+                Logger::info("Reader: no frame (read returned false)");
                 continue;
             }
         } catch (const TimeoutError&) {
-            Logger::info("Subscriber: timeout waiting for frame");
+            Logger::info("Reader: timeout waiting for frame");
             continue;
         }
 
         if (!frame) {
-            Logger::warning("Subscriber: got null frame");
+            Logger::warning("Reader: got null frame");
             continue;
         }
 
         auto* tf = dynamic_cast<StringFrame*>(frame.get());
         if (!tf) {
-            Logger::warning("Subscriber: frame is not TestFrame (name=" + frame->name() + ")");
+            Logger::warning("Reader: frame is not TestFrame (name=" + frame->name() + ")");
             continue;
         }
 
-        Logger::info("Subscriber: got TestFrame topic=" + topic + " value=" + tf->value());
+        Logger::info("Reader: got TestFrame topic=" + topic + " value=" + tf->value());
     }
 
     return 0;

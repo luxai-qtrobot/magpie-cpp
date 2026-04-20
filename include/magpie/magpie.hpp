@@ -11,8 +11,8 @@
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/transport/stream_reader.hpp>
 #include <magpie/transport/stream_writer.hpp>
-#include <magpie/transport/zmq_publisher.hpp>
-#include <magpie/transport/zmq_subscriber.hpp>
+#include <magpie/transport/zmq_stream_writer.hpp>
+#include <magpie/transport/zmq_stream_reader.hpp>
 
 // #include <magpie/transport/zmq_rpc_responder.hpp>
 // #include <magpie/discovery/mcast_discovery.hpp>

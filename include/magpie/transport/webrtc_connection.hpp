@@ -16,7 +16,7 @@ namespace magpie {
  * WebRtcConnection
  *
  * Manages a WebRTC peer connection using MQTT as the signaling transport.
- * Multiple WebRtcPublisher, WebRtcSubscriber, WebRtcRpcRequester, and
+ * Multiple WebRtcStreamWriter, WebRtcStreamReader, WebRtcRpcRequester, and
  * WebRtcRpcResponder instances can share one WebRtcConnection — mirroring
  * the MqttConnection pattern.
  *
@@ -40,7 +40,7 @@ namespace magpie {
  * if (!conn->connect(30.0)) {
  *     std::cerr << "peer not found\n";
  * }
- * // ... use with WebRtcPublisher / WebRtcSubscriber ...
+ * // ... use with WebRtcStreamWriter / WebRtcStreamReader ...
  * conn->disconnect();
  * @endcode
  */

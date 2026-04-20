@@ -1,4 +1,4 @@
-#include <magpie/transport/zmq_subscriber.hpp>
+#include <magpie/transport/zmq_stream_reader.hpp>
 #include <magpie/serializer/msgpack_serializer.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -8,17 +8,17 @@
 
 namespace magpie {
 
-bool ZmqSubscriber::startsWith(const std::string& s, const std::string& prefix) {
+bool ZmqStreamReader::startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
+ZmqStreamReader::ZmqStreamReader(const std::string& endpoint,
                              const std::vector<std::string>& topics,                             
                              int queueSize,
                              bool bind,
                              const std::string& delivery,
                             std::shared_ptr<Serializer> serializer)
-    : StreamReader("ZmqSubscriber", queueSize)
+    : StreamReader("ZmqStreamReader", queueSize)
     , endpoint_{endpoint}
     , topics_{topics}
     , delivery_{delivery}
@@ -37,7 +37,7 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
 
     if (inproc) {
         // Use shared context for inproc (like Context.instance() in Python)
-        extern zmq_ctx_t* ZmqPublisher_sharedInprocContext(); // we could expose, but to keep it simple:
+        extern zmq_ctx_t* ZmqStreamWriter_sharedInprocContext(); // we could expose, but to keep it simple:
         // For now, just use a private per-subscriber context even for inproc:
         context_     = static_cast<zmq_ctx_t*>(zmq_ctx_new());
         ownsContext_ = true;
@@ -47,15 +47,15 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
     }
 
     if (!context_) {
-        Logger::error("ZmqSubscriber: failed to create ZeroMQ context");
-        throw std::runtime_error("ZmqSubscriber: zmq_ctx_new failed");
+        Logger::error("ZmqStreamReader: failed to create ZeroMQ context");
+        throw std::runtime_error("ZmqStreamReader: zmq_ctx_new failed");
     }
 
     socket_ = zmq_socket(context_, ZMQ_SUB);
     if (!socket_) {
-        Logger::error("ZmqSubscriber: failed to create SUB socket");
+        Logger::error("ZmqStreamReader: failed to create SUB socket");
         if (ownsContext_) zmq_ctx_term(context_);
-        throw std::runtime_error("ZmqSubscriber: zmq_socket failed");
+        throw std::runtime_error("ZmqStreamReader: zmq_socket failed");
     }
 
     if (delivery_ == "latest") {
@@ -71,11 +71,11 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
     }
 
     if (rc != 0) {
-        Logger::error("ZmqSubscriber: bind/connect failed for endpoint " + endpoint_);
+        Logger::error("ZmqStreamReader: bind/connect failed for endpoint " + endpoint_);
         zmq_close(socket_);
         socket_ = nullptr;
         if (ownsContext_) zmq_ctx_term(context_);
-        throw std::runtime_error("ZmqSubscriber: bind/connect failed");
+        throw std::runtime_error("ZmqStreamReader: bind/connect failed");
     }
 
     // Subscription setup
@@ -99,7 +99,7 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
         }
     }
 
-    Logger::debug("ZmqSubscriber is ready (" +
+    Logger::debug("ZmqStreamReader is ready (" +
                   std::string(bind ? "bound" : "connected") +
                   " at " + endpoint_ +
                   " for topics: " + std::to_string(topics_.size()) +
@@ -107,13 +107,13 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
                   ", queue_size=" + std::to_string(queueSize) + ")");
 }
 
-ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
+ZmqStreamReader::ZmqStreamReader(const std::string& endpoint,
                              const std::string& topic,                             
                              int queueSize,
                              bool bind,
                              const std::string& delivery,
                             std::shared_ptr<Serializer> serializer)
-    : ZmqSubscriber(endpoint,
+    : ZmqStreamReader(endpoint,
                     std::vector<std::string>{topic},                    
                     queueSize,
                     bind,
@@ -122,15 +122,15 @@ ZmqSubscriber::ZmqSubscriber(const std::string& endpoint,
 {
 }
 
-ZmqSubscriber::~ZmqSubscriber() {
+ZmqStreamReader::~ZmqStreamReader() {
     close();
 }
 
-bool ZmqSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
+bool ZmqStreamReader::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
                                           std::string& outTopic,
                                           double timeoutSec) {
     if (!socket_ || !context_) {
-        // Logger::debug("ZmqSubscriber: socket/context null, stop reading.");
+        // Logger::debug("ZmqStreamReader: socket/context null, stop reading.");
         return false;
     }
 
@@ -223,19 +223,19 @@ bool ZmqSubscriber::transportReadBlocking(std::unique_ptr<Frame>& outFrame,
     }
 }
 
-void ZmqSubscriber::transportClose() {
-    Logger::debug("ZmqSubscriber is closing.");
+void ZmqStreamReader::transportClose() {
+    Logger::debug("ZmqStreamReader is closing.");
 
     if (socket_) {
         if (zmq_close(socket_) != 0) {
-            Logger::warning("ZmqSubscriber socket close error");
+            Logger::warning("ZmqStreamReader socket close error");
         }
         socket_ = nullptr;
     }
 
     if (context_ && ownsContext_) {
         if (zmq_ctx_term(context_) != 0) {
-            Logger::warning("ZmqSubscriber context close error");
+            Logger::warning("ZmqStreamReader context close error");
         }
         context_ = nullptr;
     }

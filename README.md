@@ -21,11 +21,11 @@ Originally developed at **[LuxAI](https://luxai.com)** for the [QTrobot](https:/
 
 ## Features
 
-- **Pub/Sub streaming** — high-throughput topic-based messaging via `StreamWriter` / `StreamReader`
+- **Topic-based streaming** — high-throughput topic-based messaging via `StreamWriter` / `StreamReader`
 - **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder` or `MqttRpcRequester` / `MqttRpcResponder`
 - **Pluggable transports** — ZeroMQ and MQTT (paho); transport abstraction layer makes adding new backends straightforward
-- **MQTT transport** — full pub/sub and RPC over MQTT with wildcard topics, TLS, auth, and auto-reconnect (optional)
-- **WebRTC transport** — P2P pub/sub, video/audio streaming, and RPC over WebRTC; MQTT used for the initial signaling handshake, all payload traffic flows directly peer-to-peer; STUN + optional TURN for NAT traversal (optional)
+- **MQTT transport** — full streaming and RPC over MQTT with wildcard topics, TLS, auth, and auto-reconnect (optional)
+- **WebRTC transport** — P2P streaming, video/audio, and RPC over WebRTC; MQTT used for the initial signaling handshake, all payload traffic flows directly peer-to-peer; STUN + optional TURN for NAT traversal (optional)
 - **Fast serialization** — msgpack by default; wire-compatible with Python MAGPIE
 - **Typed frames** — `AudioFrameRaw`, `AudioFrameFlac`, `ImageFrameRaw`, `ImageFrameJpeg`, and more (optional)
 - **Node helpers** — base classes (`BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode`) for robust streaming services
@@ -206,13 +206,13 @@ The CMake library target is `magpie::webrtc`.
 
 ## Quick Start
 
-### Pub/Sub
+### Streaming
 
-**Publisher:**
+**Writer:**
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
-#include <magpie/transport/zmq_publisher.hpp>
+#include <magpie/transport/zmq_stream_writer.hpp>
 #include <magpie/utils/logger.hpp>
 
 #include <chrono>
@@ -221,43 +221,43 @@ The CMake library target is `magpie::webrtc`.
 int main() {
     using namespace magpie;
 
-    ZmqPublisher pub("tcp://*:5555");
+    ZmqStreamWriter writer("tcp://*:5555");
     int id = 0;
 
     while (true) {
         StringFrame frame("Hello " + std::to_string(id++));
-        Logger::info("Publishing frame... ");
-        pub.write(frame, "/mytopic");
+        Logger::info("Writing frame... ");
+        writer.write(frame, "/mytopic");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 ```
 
-**Subscriber:**
+**Reader:**
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
-#include <magpie/transport/zmq_subscriber.hpp>
+#include <magpie/transport/zmq_stream_reader.hpp>
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
 int main() {
     using namespace magpie;
 
-    ZmqSubscriber sub("tcp://127.0.0.1:5555", "/mytopic");
+    ZmqStreamReader reader("tcp://127.0.0.1:5555", "/mytopic");
 
     while (true) {
         std::unique_ptr<Frame> frame;
         std::string topic;
 
-        bool ok = sub.read(frame, topic, 3.0);
+        bool ok = reader.read(frame, topic, 3.0);
         if (!ok) {
-            Logger::info("Subscriber: no frame (read returned false)");
+            Logger::info("Reader: no frame (read returned false)");
             continue;
         }
 
         auto* tf = dynamic_cast<StringFrame*>(frame.get());
-        Logger::info("Subscriber: got frame topic=" + topic + " value=" + tf->value());
+        Logger::info("Reader: got frame topic=" + topic + " value=" + tf->value());
     }
 }
 ```
@@ -331,16 +331,16 @@ int main() {
 }
 ```
 
-### MQTT Pub/Sub
+### MQTT Streaming
 
 All MQTT components share a single `MqttConnection` to the broker.
 
-**Publisher:**
+**Writer:**
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/mqtt_publisher.hpp>
+#include <magpie/transport/mqtt_stream_writer.hpp>
 
 int main() {
     using namespace magpie;
@@ -348,22 +348,22 @@ int main() {
     auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     conn->connect();
 
-    MqttPublisher pub(conn);
+    MqttStreamWriter writer(conn);
 
     StringFrame frame("hello from C++");
-    pub.write(frame, "sensors/temperature");
+    writer.write(frame, "sensors/temperature");
 
-    pub.close();
+    writer.close();
     conn->disconnect();
 }
 ```
 
-**Subscriber** (supports `+` and `#` wildcards):
+**Reader** (supports `+` and `#` wildcards):
 
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/mqtt_subscriber.hpp>
+#include <magpie/transport/mqtt_stream_reader.hpp>
 
 int main() {
     using namespace magpie;
@@ -371,16 +371,16 @@ int main() {
     auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     conn->connect();
 
-    MqttSubscriber sub(conn, "sensors/+");
+    MqttStreamReader reader(conn, "sensors/+");
 
     std::unique_ptr<Frame> frame;
     std::string topic;
-    if (sub.read(frame, topic, 5.0)) {
+    if (reader.read(frame, topic, 5.0)) {
         auto* sf = dynamic_cast<StringFrame*>(frame.get());
         Logger::info("[" + topic + "] " + sf->value);
     }
 
-    sub.close();
+    reader.close();
     conn->disconnect();
 }
 ```
@@ -435,15 +435,15 @@ int main() {
 }
 ```
 
-### WebRTC Pub/Sub
+### WebRTC Streaming
 
-WebRTC transport enables **P2P communication over the internet** — no broker in the data path after the initial handshake.  A `WebRtcConnection` is shared by all publishers, subscribers, and RPC components, mirroring the `MqttConnection` pattern.
+WebRTC transport enables **P2P communication over the internet** — no broker in the data path after the initial handshake.  A `WebRtcConnection` is shared by all writers, readers, and RPC components, mirroring the `MqttConnection` pattern.
 
 Signaling (SDP offer/answer + ICE candidates) is exchanged via MQTT.  Role negotiation (offerer vs answerer) is fully automatic.
 
 > **Note — no RTP media tracks in C++.**  The C++ implementation uses [libdatachannel](https://github.com/paullouisageneau/libdatachannel), which provides data channels only.  There is no RTP/SRTP media track stack (no equivalent of aiortc or a browser's `RTCPeerConnection` media pipeline).  Video and audio frames are always transported over WebRTC data channels — either the `magpie-media` unreliable channel (`useMediaChannels=true`, default) or the reliable `magpie` channel (`useMediaChannels=false`).  When interoperating with a Python or JS peer that has `use_media_channels=True` and sends real RTP video tracks, set `useMediaChannels=false` on the C++ side so that both peers agree to use the data-channel path for video/audio.
 
-`WebRtcPublisher` routes internally based on frame type and the `useMediaChannels` option (default `true`):
+`WebRtcStreamWriter` routes internally based on frame type and the `useMediaChannels` option (default `true`):
 
 | Frame type | `useMediaChannels=true` | `useMediaChannels=false` |
 |---|---|---|
@@ -452,14 +452,14 @@ Signaling (SDP offer/answer + ICE candidates) is exchanged via MQTT.  Role negot
 
 With `useMediaChannels=false`, video and audio frames are topic-routed just like regular data, enabling **multiple simultaneous video/audio topics** (e.g. two cameras on different topics).
 
-**Publisher:**
+**Writer:**
 
 ```cpp
 #include <magpie/frames/image_frame.hpp>
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_connection.hpp>
-#include <magpie/transport/webrtc_publisher.hpp>
+#include <magpie/transport/webrtc_stream_writer.hpp>
 
 int main() {
     using namespace magpie;
@@ -473,31 +473,31 @@ int main() {
         return 1;
     }
 
-    WebRtcPublisher pub(conn);
+    WebRtcStreamWriter writer(conn);
 
     // Send arbitrary data over the data channel
     DictFrame state;
     state["x"] = 1.0;
-    pub.write(state, "robot/state");
+    writer.write(state, "robot/state");
 
     // Send a video frame over the magpie-media unreliable channel
     // (capture a real frame here; this is just a placeholder allocation)
     ImageFrameRaw img(width * height * 3, "raw", width, height, 3, "BGR");
-    pub.write(img);   // topic defaults to "video"
+    writer.write(img);   // topic defaults to "video"
 
-    pub.close();
+    writer.close();
     conn->disconnect();
     sig->disconnect();
 }
 ```
 
-**Subscriber:**
+**Reader:**
 
 ```cpp
 #include <magpie/frames/image_frame.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_connection.hpp>
-#include <magpie/transport/webrtc_subscriber.hpp>
+#include <magpie/transport/webrtc_stream_reader.hpp>
 
 int main() {
     using namespace magpie;
@@ -508,28 +508,28 @@ int main() {
     auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
     if (!conn->connect(30.0)) { return 1; }
 
-    // Subscribe to a data channel topic
-    WebRtcSubscriber sub(conn, "robot/state");
+    // Read from a data channel topic
+    WebRtcStreamReader reader(conn, "robot/state");
 
-    // Subscribe to video frames (magpie-media channel)
-    WebRtcSubscriber vsub(conn, WebRtcSubscriber::VIDEO_TOPIC);
+    // Read video frames (magpie-media channel)
+    WebRtcStreamReader vreader(conn, WebRtcStreamReader::VIDEO_TOPIC);
 
     while (true) {
         std::unique_ptr<Frame> frame;
         std::string topic;
 
-        if (sub.read(frame, topic, 3.0)) {
+        if (reader.read(frame, topic, 3.0)) {
             Logger::info("data: " + topic);
         }
-        if (vsub.read(frame, topic, 0.0)) {
+        if (vreader.read(frame, topic, 0.0)) {
             auto* img = dynamic_cast<ImageFrameRaw*>(frame.get());
             Logger::info("video frame " + std::to_string(img->width()) +
                          "x" + std::to_string(img->height()));
         }
     }
 
-    sub.close();
-    vsub.close();
+    reader.close();
+    vreader.close();
     conn->disconnect();
     sig->disconnect();
 }
@@ -733,14 +733,14 @@ int main() {
 
 ### Transports
 
-| Transport | Pub/Sub | RPC | Package |
+| Transport | Streaming | RPC | Package |
 |-----------|---------|-----|---------|
-| ZeroMQ | `ZmqPublisher` / `ZmqSubscriber` | `ZmqRpcRequester` / `ZmqRpcResponder` | core |
-| MQTT (paho) | `MqttPublisher` / `MqttSubscriber` | `MqttRpcRequester` / `MqttRpcResponder` | `magpie::mqtt` |
+| ZeroMQ | `ZmqStreamWriter` / `ZmqStreamReader` | `ZmqRpcRequester` / `ZmqRpcResponder` | core |
+| MQTT (paho) | `MqttStreamWriter` / `MqttStreamReader` | `MqttRpcRequester` / `MqttRpcResponder` | `magpie::mqtt` |
 
 The transport layer is **pluggable**: `StreamWriter`, `StreamReader`, `RpcRequester`, and `RpcResponder` are abstract base classes. Switching from ZMQ to MQTT (or any future transport) requires no changes to application-level frame or node code.
 
-The MQTT transport shares a single `MqttConnection` per broker across all publishers, subscribers, and RPC components, reusing one TCP/TLS connection.
+The MQTT transport shares a single `MqttConnection` per broker across all writers, readers, and RPC components, reusing one TCP/TLS connection.
 
 ### Serialization
 

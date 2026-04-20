@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(magpie
-    VERSION 0.6.3
+    VERSION 0.7.0
     LANGUAGES CXX
 )
 
@@ -70,8 +70,8 @@ add_library(magpie_core SHARED
     src/transport/stream_reader.cpp
     src/transport/rpc_requester.cpp
     src/transport/rpc_responder.cpp
-    src/transport/zmq/zmq_publisher.cpp
-    src/transport/zmq/zmq_subscriber.cpp
+    src/transport/zmq/zmq_stream_writer.cpp
+    src/transport/zmq/zmq_stream_reader.cpp
     src/transport/zmq/zmq_rpc_requester.cpp
     src/transport/zmq/zmq_rpc_responder.cpp
     src/discovery/zconf_discovery.cpp
@@ -164,8 +164,8 @@ if(MAGPIE_WITH_MQTT)
 
     add_library(magpie_mqtt SHARED
         src/transport/mqtt/mqtt_connection.cpp
-        src/transport/mqtt/mqtt_publisher.cpp
-        src/transport/mqtt/mqtt_subscriber.cpp
+        src/transport/mqtt/mqtt_stream_writer.cpp
+        src/transport/mqtt/mqtt_stream_reader.cpp
         src/transport/mqtt/mqtt_rpc_requester.cpp
         src/transport/mqtt/mqtt_rpc_responder.cpp
     )
@@ -265,8 +265,8 @@ if(MAGPIE_WITH_WEBRTC)
 
     add_library(magpie_webrtc SHARED
         src/transport/webrtc/webrtc_connection.cpp
-        src/transport/webrtc/webrtc_publisher.cpp
-        src/transport/webrtc/webrtc_subscriber.cpp
+        src/transport/webrtc/webrtc_stream_writer.cpp
+        src/transport/webrtc/webrtc_stream_reader.cpp
         src/transport/webrtc/webrtc_rpc_requester.cpp
         src/transport/webrtc/webrtc_rpc_responder.cpp
     )

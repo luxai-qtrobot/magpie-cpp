@@ -1,4 +1,4 @@
-#include <magpie/transport/mqtt_publisher.hpp>
+#include <magpie/transport/mqtt_stream_writer.hpp>
 
 #include <magpie/serializer/msgpack_serializer.hpp>
 #include <magpie/serializer/value.hpp>
@@ -6,12 +6,12 @@
 
 namespace magpie {
 
-MqttPublisher::MqttPublisher(std::shared_ptr<MqttConnection> connection,
+MqttStreamWriter::MqttStreamWriter(std::shared_ptr<MqttConnection> connection,
                                std::shared_ptr<Serializer>     serializer,
                                int                             queueSize,
                                int                             qos,
                                int                             retain)
-    : StreamWriter("MqttPublisher", queueSize)
+    : StreamWriter("MqttStreamWriter", queueSize)
     , connection_(std::move(connection))
     , qos_(qos)
     , retain_(retain >= 0 ? static_cast<bool>(retain)
@@ -23,19 +23,19 @@ MqttPublisher::MqttPublisher(std::shared_ptr<MqttConnection> connection,
     serializer_ = std::move(serializer);
 
     if (!connection_) {
-        throw std::invalid_argument("MqttPublisher: connection is null");
+        throw std::invalid_argument("MqttStreamWriter: connection is null");
     }
 
-    Logger::debug("MqttPublisher: created (queueSize=" + std::to_string(queueSize) + ")");
+    Logger::debug("MqttStreamWriter: created (queueSize=" + std::to_string(queueSize) + ")");
 }
 
-MqttPublisher::~MqttPublisher() {
+MqttStreamWriter::~MqttStreamWriter() {
     close();
 }
 
-void MqttPublisher::transportWrite(const Frame& frame, const std::string& topic) {
+void MqttStreamWriter::transportWrite(const Frame& frame, const std::string& topic) {
     if (!connection_) {
-        Logger::warning("MqttPublisher::transportWrite: connection is null");
+        Logger::warning("MqttStreamWriter::transportWrite: connection is null");
         return;
     }
 
@@ -51,14 +51,14 @@ void MqttPublisher::transportWrite(const Frame& frame, const std::string& topic)
 
         connection_->publish(topic, bytes.data(), bytes.size(), resolvedQos, resolvedRetain);
     } catch (const std::exception& e) {
-        Logger::warning(std::string("MqttPublisher: write failed: ") + e.what());
+        Logger::warning(std::string("MqttStreamWriter: write failed: ") + e.what());
     } catch (...) {
-        Logger::warning("MqttPublisher: write failed with unknown exception");
+        Logger::warning("MqttStreamWriter: write failed with unknown exception");
     }
 }
 
-void MqttPublisher::transportClose() {
-    Logger::debug("MqttPublisher: closed (connection remains open)");
+void MqttStreamWriter::transportClose() {
+    Logger::debug("MqttStreamWriter: closed (connection remains open)");
     // Do NOT disconnect the shared connection; other components may still use it.
 }
 
