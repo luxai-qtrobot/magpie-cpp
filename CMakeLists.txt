@@ -327,37 +327,61 @@ install(TARGETS magpie
 
 if(TARGET magpie_audio)
     install(TARGETS magpie_audio
-        EXPORT MagpieTargets
+        EXPORT MagpieTargets_audio
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT audio
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT audio
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT audio
+    )
+    install(EXPORT MagpieTargets_audio
+        FILE MagpieTargets_audio.cmake
+        NAMESPACE magpie::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
+        COMPONENT audio
     )
 endif()
 
 if(TARGET magpie_mqtt)
     install(TARGETS magpie_mqtt
-        EXPORT MagpieTargets
+        EXPORT MagpieTargets_mqtt
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT mqtt
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT mqtt
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT mqtt
+    )
+    install(EXPORT MagpieTargets_mqtt
+        FILE MagpieTargets_mqtt.cmake
+        NAMESPACE magpie::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
+        COMPONENT mqtt
     )
 endif()
 
 if(TARGET magpie_video)
     install(TARGETS magpie_video
-        EXPORT MagpieTargets
+        EXPORT MagpieTargets_video
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT video
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT video
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT video
+    )
+    install(EXPORT MagpieTargets_video
+        FILE MagpieTargets_video.cmake
+        NAMESPACE magpie::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
+        COMPONENT video
     )
 endif()
 
 if(TARGET magpie_webrtc)
     install(TARGETS magpie_webrtc
-        EXPORT MagpieTargets
+        EXPORT MagpieTargets_webrtc
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT webrtc
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT webrtc
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT webrtc
+    )
+    install(EXPORT MagpieTargets_webrtc
+        FILE MagpieTargets_webrtc.cmake
+        NAMESPACE magpie::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/magpie
+        COMPONENT webrtc
     )
 endif()
 

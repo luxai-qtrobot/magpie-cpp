@@ -21,4 +21,10 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/MagpieTargets.cmake")
 
+foreach(_comp audio mqtt video webrtc)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/MagpieTargets_${_comp}.cmake")
+        include("${CMAKE_CURRENT_LIST_DIR}/MagpieTargets_${_comp}.cmake")
+    endif()
+endforeach()
+
 check_required_components(Magpie)
