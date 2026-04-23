@@ -82,6 +82,7 @@ public:
      * will then be called on it.
      */
     static void registerType(const std::string& typeName, Factory factory);
+    static void unregisterType(const std::string& typeName);
 
 protected:
     std::string gid_;

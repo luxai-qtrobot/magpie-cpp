@@ -50,6 +50,10 @@ void Frame::registerType(const std::string& typeName, Factory factory) {
     registry()[typeName] = std::move(factory);
 }
 
+void Frame::unregisterType(const std::string& typeName) {
+    registry().erase(typeName);
+}
+
 std::unique_ptr<Frame> Frame::fromDict(const Dict& dict) {
     auto it = dict.find("name");
     if (it == dict.end() || it->second.type() != Value::Type::String) {

@@ -255,5 +255,9 @@ RTF_TEST_CASE("Frame") {
         }
     }
 
+    Frame::unregisterType("TestFrameA");
+    Frame::unregisterType("NullFactoryFrame");
+    Frame::unregisterType("SwapFrame");
+
     ROBOTTESTINGFRAMEWORK_TEST_REPORT("done");
 }
