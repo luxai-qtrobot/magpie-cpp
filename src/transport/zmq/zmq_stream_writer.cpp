@@ -60,10 +60,13 @@ ZmqStreamWriter::ZmqStreamWriter(const std::string& endpoint,
         throw std::runtime_error("ZmqStreamWriter: zmq_socket failed");
     }
 
-    // Delivery mode
+    // Delivery mode: keep only the latest message per subscriber.
+    // Both must be set before bind/connect.
     if (delivery_ == "latest") {
         int hwm = 1;
         zmq_setsockopt(socket_, ZMQ_SNDHWM, &hwm, sizeof(hwm));
+        int conflate = 1;
+        zmq_setsockopt(socket_, ZMQ_CONFLATE, &conflate, sizeof(conflate));
     }
 
     int rc = 0;
