@@ -17,3 +17,7 @@
 // #include <magpie/transport/zmq_rpc_responder.hpp>
 // #include <magpie/discovery/mcast_discovery.hpp>
 // #include <magpie/nodes/base_node.hpp>
+
+#include <magpie/schema/base_schema.hpp>
+#include <magpie/schema/json_rpc_schema.hpp>
+#include <magpie/schema/mcp_schema.hpp>

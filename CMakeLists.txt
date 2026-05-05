@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(magpie
-    VERSION 0.7.0
+    VERSION 0.7.1
     LANGUAGES CXX
 )
 
@@ -75,6 +75,8 @@ add_library(magpie_core SHARED
     src/transport/zmq/zmq_rpc_requester.cpp
     src/transport/zmq/zmq_rpc_responder.cpp
     src/discovery/zconf_discovery.cpp
+    src/schema/json_rpc_schema.cpp
+    src/schema/mcp_schema.cpp
 )
 add_library(magpie::core ALIAS magpie_core)
 

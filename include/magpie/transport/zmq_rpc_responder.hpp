@@ -28,9 +28,10 @@ class ZmqRpcResponder : public RpcResponder {
 public:
     using Object = Value;
 
-    ZmqRpcResponder(const std::string& endpoint,
-                    std::shared_ptr<Serializer> serializer = nullptr,                    
-                    bool bind = true);
+    ZmqRpcResponder(const std::string&          endpoint,
+                    std::shared_ptr<Serializer> serializer = nullptr,
+                    bool                        bind       = true,
+                    std::shared_ptr<BaseSchema> schema     = nullptr);
 
     ~ZmqRpcResponder() override;
 

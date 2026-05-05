@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include <magpie/schema/base_schema.hpp>
 #include <magpie/serializer/value.hpp>
 #include <magpie/transport/timeout_error.hpp>
 
@@ -18,28 +19,37 @@ class RpcRequester {
 public:
     using Object = Value;
 
-    explicit RpcRequester(const std::string& name = "RpcRequester");
+    explicit RpcRequester(const std::string&          name   = "RpcRequester",
+                          std::shared_ptr<BaseSchema> schema = nullptr);
     virtual ~RpcRequester() = default;
 
     RpcRequester(const RpcRequester&)            = delete;
     RpcRequester& operator=(const RpcRequester&) = delete;
 
     /**
-     * Performs an RPC call using the underlying transport.
+     * Performs a raw RPC call (no schema).
      *
      * @param request    Request payload to send.
-     * @param timeoutSec Timeout in seconds for waiting for a reply.
-     *                   < 0 means "no timeout" (transport decides).
-     *
-     * @return Response object.
-     *
+     * @param timeoutSec Timeout in seconds. < 0 means no timeout.
      * @throws std::runtime_error if already closed.
-     * @throws ReplyTimeoutError  if no reply arrives in time.
-     * @throws AckTimeoutError    if no acknowledgment arrives in time.
-     * @throws TimeoutError       for other timeout conditions.
-     * @throws std::exception     for transport-level errors.
+     * @throws ReplyTimeoutError / AckTimeoutError / TimeoutError on timeout.
      */
     Object call(const Object& request, double timeoutSec = -1.0);
+
+    /**
+     * Schema-based RPC call (requires schema set at construction).
+     * Wraps the call in a JSON-RPC 2.0 envelope and unwraps the response.
+     *
+     * @param method     JSON-RPC method name.
+     * @param params     Named parameters as Value::Dict.
+     * @param timeoutSec Timeout in seconds. < 0 means no timeout.
+     * @throws std::runtime_error if already closed or no schema set.
+     * @throws JsonRpcError       if the server returns a JSON-RPC error.
+     * @throws ReplyTimeoutError / AckTimeoutError / TimeoutError on timeout.
+     */
+    Object call(const std::string& method,
+                const Value::Dict& params      = {},
+                double             timeoutSec  = -1.0);
 
     /**
      * Close the requester and underlying transport.
@@ -71,8 +81,9 @@ protected:
     virtual void transportClose() = 0;
 
 private:
-    std::string name_;
-    bool        closed_{false};
+    std::string                 name_;
+    bool                        closed_{false};
+    std::shared_ptr<BaseSchema> schema_;
 };
 
 } // namespace magpie

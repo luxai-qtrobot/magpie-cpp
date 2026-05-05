@@ -3,14 +3,15 @@
 
 namespace magpie {
 
-RpcResponder::RpcResponder(const std::string& name)
-    : name_{name} {
+RpcResponder::RpcResponder(const std::string& name, std::shared_ptr<BaseSchema> schema)
+    : name_{name}, schema_{std::move(schema)} {
 }
 
 bool RpcResponder::handleOnce(const RpcHandler& handler, double timeoutSec) {
-    if (closed_) {
+    if (closed_)
         throw std::runtime_error(name_ + " is closed");
-    }
+    if (!handler && !schema_)
+        throw std::runtime_error(name_ + ": handler is required when no schema is set");
 
     Object        request;
     ClientContext ctx;
@@ -18,7 +19,6 @@ bool RpcResponder::handleOnce(const RpcHandler& handler, double timeoutSec) {
     try {
         transportRecv(request, ctx, timeoutSec);
     } catch (const TimeoutError&) {
-        // No request within timeout -> behave like Python: return False.
         return false;
     } catch (const std::exception& e) {
         Logger::warning(name_ + ": transport receive failed: " + std::string(e.what()));
@@ -28,27 +28,30 @@ bool RpcResponder::handleOnce(const RpcHandler& handler, double timeoutSec) {
         throw;
     }
 
-    // Call user handler
-    Object response;
-    try {
-        response = handler(request);
-    } catch (const std::exception& e) {
-        Logger::warning(name_ + ": handler threw exception: " + std::string(e.what()));
-        throw;
-    } catch (...) {
-        Logger::warning(name_ + ": handler threw unknown exception");
-        throw;
-    }
-
-    // Send response
-    try {
-        transportSend(response, ctx);
-    } catch (const std::exception& e) {
-        Logger::warning(name_ + ": transport send failed: " + std::string(e.what()));
-        throw;
-    } catch (...) {
-        Logger::warning(name_ + ": transport send failed with unknown error");
-        throw;
+    if (schema_) {
+        Object response = schema_->dispatch(request);
+        if (response.type() != Value::Type::Null) {
+            try {
+                transportSend(response, ctx);
+            } catch (const std::exception& e) {
+                Logger::warning(name_ + ": transport send failed: " + std::string(e.what()));
+                throw;
+            }
+        }
+    } else {
+        Object response;
+        try {
+            response = handler(request);
+        } catch (const std::exception& e) {
+            Logger::warning(name_ + ": handler threw exception: " + std::string(e.what()));
+            throw;
+        }
+        try {
+            transportSend(response, ctx);
+        } catch (const std::exception& e) {
+            Logger::warning(name_ + ": transport send failed: " + std::string(e.what()));
+            throw;
+        }
     }
 
     return true;

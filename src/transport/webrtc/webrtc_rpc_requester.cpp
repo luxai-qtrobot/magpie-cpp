@@ -17,8 +17,9 @@ namespace magpie {
 WebRtcRpcRequester::WebRtcRpcRequester(std::shared_ptr<WebRtcConnection> connection,
                                          const std::string&                serviceName,
                                          const std::string&                instanceName,
-                                         double                            ackTimeoutSec)
-    : RpcRequester(instanceName.empty() ? "WebRtcRpcRequester" : instanceName)
+                                         double                            ackTimeoutSec,
+                                         std::shared_ptr<BaseSchema>       schema)
+    : RpcRequester(instanceName.empty() ? "WebRtcRpcRequester" : instanceName, std::move(schema))
     , connection_(std::move(connection))
     , serviceName_(serviceName)
     , ackTimeoutSec_(ackTimeoutSec)

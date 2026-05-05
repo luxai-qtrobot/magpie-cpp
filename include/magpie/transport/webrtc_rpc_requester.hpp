@@ -56,7 +56,8 @@ public:
     explicit WebRtcRpcRequester(std::shared_ptr<WebRtcConnection> connection,
                                  const std::string&                serviceName,
                                  const std::string&                instanceName  = std::string(),
-                                 double                            ackTimeoutSec = 2.0);
+                                 double                            ackTimeoutSec = 2.0,
+                                 std::shared_ptr<BaseSchema>       schema        = nullptr);
 
     ~WebRtcRpcRequester() override;
 

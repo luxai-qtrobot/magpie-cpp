@@ -20,8 +20,9 @@ MqttRpcRequester::MqttRpcRequester(std::shared_ptr<MqttConnection> connection,
                                      std::shared_ptr<Serializer>     serializer,
                                      const std::string&              instanceName,
                                      double                          ackTimeoutSec,
-                                     int                             qos)
-    : RpcRequester(instanceName.empty() ? "MqttRpcRequester" : instanceName)
+                                     int                             qos,
+                                     std::shared_ptr<BaseSchema>     schema)
+    : RpcRequester(instanceName.empty() ? "MqttRpcRequester" : instanceName, std::move(schema))
     , connection_(std::move(connection))
     , serviceName_(serviceName)
     , ackTimeoutSec_(ackTimeoutSec)

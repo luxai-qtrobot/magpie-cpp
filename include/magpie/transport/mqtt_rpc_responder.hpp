@@ -58,7 +58,8 @@ public:
                                const std::string&              serviceName,
                                std::shared_ptr<Serializer>     serializer   = nullptr,
                                const std::string&              instanceName = std::string(),
-                               int                             qos          = -1);
+                               int                             qos          = -1,
+                               std::shared_ptr<BaseSchema>     schema       = nullptr);
 
     ~MqttRpcResponder() override;
 

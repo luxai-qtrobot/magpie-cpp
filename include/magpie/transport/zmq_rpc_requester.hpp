@@ -31,10 +31,11 @@ class ZmqRpcRequester : public RpcRequester {
 public:
     using Object = Value;
 
-    ZmqRpcRequester(const std::string& endpoint,
-                    std::shared_ptr<Serializer> serializer = nullptr,
-                    const std::string& identity = std::string(),
-                    double ackTimeoutSec = 2.0);
+    ZmqRpcRequester(const std::string&          endpoint,
+                    std::shared_ptr<Serializer> serializer    = nullptr,
+                    const std::string&          identity      = std::string(),
+                    double                      ackTimeoutSec = 2.0,
+                    std::shared_ptr<BaseSchema> schema        = nullptr);
 
     ~ZmqRpcRequester() override;
 

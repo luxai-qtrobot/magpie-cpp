@@ -54,7 +54,8 @@ public:
      */
     explicit WebRtcRpcResponder(std::shared_ptr<WebRtcConnection> connection,
                                  const std::string&                serviceName,
-                                 const std::string&                instanceName = std::string());
+                                 const std::string&                instanceName = std::string(),
+                                 std::shared_ptr<BaseSchema>       schema       = nullptr);
 
     ~WebRtcRpcResponder() override;
 

@@ -2,50 +2,79 @@
   <img src="https://github.com/luxai-qtrobot/magpie-cpp/raw/main/assets/magpie.png" alt="MAGPIE Logo" width="200"/>
 </p>
 
-<h1 align="center">MAGPIE-CPP</h1>
-<p align="center"><em>Message Abstraction & General-Purpose Integration Engine (C++)</em></p>
+<h1 align="center">MAGPIE C++</h1>
+<p align="center"><em>Message Abstraction &amp; General-Purpose Integration Engine (C++)</em></p>
 
 <p align="center">
   <a href="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml">
-    <img src="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml/badge.svg?branch=main" alt="Test Status"/>
+    <img src="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"/>
+  </a>
+  <a href="https://github.com/luxai-qtrobot/magpie-cpp/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/luxai-qtrobot/magpie-cpp" alt="License"/>
   </a>
 </p>
 
 ---
 
-MAGPIE-CPP is the C++ counterpart of the original **[MAGPIE (Python)](https://github.com/luxai-qtrobot/magpie)** project. It preserves the same core concepts, wire formats, and interoperability goals while offering a modern, efficient C++14 implementation suitable for embedded, robotics, and high-performance systems.
+MAGPIE C++ is the C++ counterpart of **[MAGPIE (Python)](https://github.com/luxai-qtrobot/magpie)** — a **transport-agnostic messaging and RPC framework for developers and AI agents**.
 
-Originally developed at **[LuxAI](https://luxai.com)** for the [QTrobot](https://luxai.com/qtrobot-for-research/) ecosystem, MAGPIE-CPP is generic enough for any C++-based distributed system or AI pipeline.
+Whether the wire is ZeroMQ, MQTT, WebRTC, or something entirely custom, the application layer never changes. Services built with MAGPIE C++ are natively consumable by AI tools via built-in MCP support, and fully interoperable with Python MAGPIE and MAGPIE.js across all transports.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+  - [ZMQ Streaming](#zmq-streaming)
+  - [ZMQ Request / Response RPC](#zmq-request--response-rpc)
+  - [MQTT Streaming](#mqtt-streaming)
+  - [MQTT Request / Response RPC](#mqtt-request--response-rpc)
+  - [MQTT Advanced Options](#mqtt-advanced-options)
+  - [WebRTC Streaming](#webrtc-streaming)
+  - [WebRTC Request / Response RPC](#webrtc-request--response-rpc)
+  - [WebRTC Advanced Options](#webrtc-advanced-options)
+  - [Schema-based RPC](#schema-based-rpc)
+  - [MCP Integration](#mcp-integration)
+  - [Network Discovery](#network-discovery)
+- [Architecture](#architecture)
+- [Related Projects](#related-projects)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Topic-based streaming** — high-throughput topic-based messaging via `StreamWriter` / `StreamReader`
-- **Request/Response RPC** — synchronous RPC via `ZmqRpcRequester` / `ZmqRpcResponder` or `MqttRpcRequester` / `MqttRpcResponder`
-- **Pluggable transports** — ZeroMQ and MQTT (paho); transport abstraction layer makes adding new backends straightforward
-- **MQTT transport** — full streaming and RPC over MQTT with wildcard topics, TLS, auth, and auto-reconnect (optional)
-- **WebRTC transport** — P2P streaming, video/audio, and RPC over WebRTC; MQTT used for the initial signaling handshake, all payload traffic flows directly peer-to-peer; STUN + optional TURN for NAT traversal (optional)
-- **Fast serialization** — msgpack by default; wire-compatible with Python MAGPIE
-- **Typed frames** — `AudioFrameRaw`, `AudioFrameFlac`, `ImageFrameRaw`, `ImageFrameJpeg`, and more (optional)
-- **Node helpers** — base classes (`BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode`) for robust streaming services
-- **Network discovery** — mDNS/Zeroconf node advertisement and scanning via Avahi (optional)
-- **Lightweight core** — audio, video, MQTT, and discovery components are fully opt-in via CMake flags
+- **One API, any transport** — `StreamWriter`, `StreamReader`, `RpcRequester`, `RpcResponder` work identically over ZMQ, MQTT, and WebRTC; swap transports with one constructor change
+- **Topic-based streaming** — high-throughput pub/sub via typed frames; publishers and subscribers are completely decoupled
+- **Request / Response RPC** — synchronous request/reply with ACK, timeout, and per-call demux over any transport
+- **Schema-based RPC** — JSON-RPC 2.0 dispatch via `JsonRpcSchema`; define your API once, call methods by name (`client.call("add", {{"a", 3}, {"b", 4}})`)
+- **MCP server support** — `McpSchema` turns any MAGPIE C++ RPC responder into a fully compliant MCP tool server (`initialize`, `tools/list`, `tools/call`); any FastMCP `Client` using the Python `McpTransport` can call those tools over ZMQ, MQTT, or WebRTC
+- **MQTT transport** — full streaming and RPC over MQTT; shared connection; supports `mqtt://`, `mqtts://`, `ws://`, `wss://`, TLS, auth, LWT, and auto-reconnect
+- **WebRTC transport** — P2P streaming and RPC over WebRTC; MQTT used only for the initial signaling handshake; all payload traffic flows peer-to-peer; STUN + optional TURN for NAT traversal
+- **Typed frames** — `ImageFrameJpeg`, `ImageFrameRaw`, `AudioFrameRaw`, `AudioFrameFlac`, and more; automatic serialization/deserialization across all transports
+- **Node helpers** — `BaseNode`, `SourceNode`, `SinkNode`, `ProcessNode`, `ServerNode` add lifecycle and thread management on top of the raw transport primitives
+- **Network discovery** — mDNS/Zeroconf node advertisement and scanning via `ZconfDiscovery`
+- **Interoperable** — wire-compatible with Python MAGPIE and MAGPIE.js across all transports and serialization formats
+- **Lightweight core** — ZeroMQ is the only core dependency; MQTT, WebRTC, audio, and video are fully opt-in
 
 ---
 
 ## Installation
 
-### Install from pre-built packages (.deb)
+### Pre-built packages (.deb)
 
 Pre-built Debian packages are available from the [Releases](https://github.com/luxai-qtrobot/magpie-cpp/releases) page.
 
-Supported platforms:
-- Debian 13 (arm64)
-- Ubuntu 22.04 (amd64)
-- Ubuntu 24.04 (amd64)
+**Supported platforms:** Debian 13 (arm64), Ubuntu 22.04 (amd64), Ubuntu 24.04 (amd64)
 
-**Core library:**
+| Package | What it adds |
+|---|---|
+| `libmagpie` | Core library — ZMQ streaming, RPC, schema, MCP, nodes, discovery |
+| `libmagpie-audio` | Audio frames (`AudioFrameRaw`, `AudioFrameFlac`) |
+| `libmagpie-mqtt` | MQTT transport |
+| `libmagpie-video` | Image frames (`ImageFrameRaw`, `ImageFrameJpeg`) |
 
 ```bash
 # Ubuntu 24.04 amd64
@@ -58,155 +87,44 @@ sudo dpkg -i libmagpie_0.6.2-1deb22.04_amd64.deb
 sudo dpkg -i libmagpie_0.6.2-1deb13_arm64.deb
 ```
 
-**Audio extension (optional):**
-
-```bash
-# Ubuntu 24.04 amd64
-sudo dpkg -i libmagpie-audio_0.6.2-1deb24.04_amd64.deb
-
-# Ubuntu 22.04 amd64
-sudo dpkg -i libmagpie-audio_0.6.2-1deb22.04_amd64.deb
-
-# Debian 13 arm64
-sudo dpkg -i libmagpie-audio_0.6.2-1deb13_arm64.deb
-```
-
-**MQTT extension (optional):**
-
-```bash
-# Ubuntu 24.04 amd64
-sudo dpkg -i libmagpie-mqtt_0.6.2-1deb24.04_amd64.deb
-
-# Ubuntu 22.04 amd64
-sudo dpkg -i libmagpie-mqtt_0.6.2-1deb22.04_amd64.deb
-
-# Debian 13 arm64
-sudo dpkg -i libmagpie-mqtt_0.6.2-1deb13_arm64.deb
-```
-
-**Video extension (optional):**
-
-```bash
-# Ubuntu 24.04 amd64
-sudo dpkg -i libmagpie-video_0.6.2-1deb24.04_amd64.deb
-
-# Ubuntu 22.04 amd64
-sudo dpkg -i libmagpie-video_0.6.2-1deb22.04_amd64.deb
-
-# Debian 13 arm64
-sudo dpkg -i libmagpie-video_0.6.2-1deb13_arm64.deb
-```
-
----
-
 ### Build from Source
 
-MAGPIE-CPP uses **CMake** and targets **C++14**.
-
-Clone the repository:
+MAGPIE C++ uses **CMake** and targets **C++14**. Supported on Linux (x86\_64, ARM, Raspberry Pi, NVIDIA Jetson).
 
 ```bash
 git clone https://github.com/luxai-qtrobot/magpie-cpp.git
 cd magpie-cpp
 ```
 
-#### Core
-
-Install dependencies:
+| Option | Extra dependency | CMake flag |
+|---|---|---|
+| Core (ZMQ + Schema + MCP) | `libzmq3-dev libmsgpack-dev libfmt-dev` | _(default)_ |
+| Audio frames | `libflac-dev` | `-DMAGPIE_WITH_AUDIO=ON` |
+| MQTT transport | `libpaho-mqtt-dev libpaho-mqttpp-dev` | `-DMAGPIE_WITH_MQTT=ON` |
+| Video frames | `libturbojpeg0-dev` | `-DMAGPIE_WITH_VIDEO=ON` |
+| WebRTC transport | `libdatachannel-dev` + MQTT | `-DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON` |
 
 ```bash
+# Core only
 sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev
+cmake -S . -B build && cmake --build build
+
+# With MQTT
+sudo apt install libpaho-mqtt-dev libpaho-mqttpp-dev
+cmake -S . -B build -DMAGPIE_WITH_MQTT=ON && cmake --build build
+
+# With WebRTC (requires MQTT)
+sudo apt install libdatachannel-dev
+cmake -S . -B build -DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON && cmake --build build
 ```
 
-Build:
-
-```bash
-cmake -S . -B build
-cmake --build build
-```
-
-#### With Audio support
-
-Install additional dependency:
-
-```bash
-sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libflac-dev
-```
-
-Build:
-
-```bash
-cmake -S . -B build -DMAGPIE_WITH_AUDIO=ON
-cmake --build build
-```
-
-#### With MQTT support
-
-Install additional dependencies:
-
-```bash
-sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libpaho-mqtt-dev libpaho-mqttpp-dev
-```
-
-Build:
-
-```bash
-cmake -S . -B build -DMAGPIE_WITH_MQTT=ON
-cmake --build build
-```
-
-The CMake library target is `magpie::mqtt`.
-
-#### With Video support
-
-Install additional dependency:
-
-```bash
-sudo apt install libzmq3-dev libmsgpack-dev libfmt-dev libturbojpeg0-dev
-```
-
-Build:
-
-```bash
-cmake -S . -B build -DMAGPIE_WITH_VIDEO=ON
-cmake --build build
-```
-
-The CMake library target is `magpie::core`.
-
-#### With WebRTC support
-
-WebRTC transport requires MQTT support and [libdatachannel](https://github.com/paullouisageneau/libdatachannel).
-
-Install libdatachannel (from source or a distro package, e.g.):
-
-```bash
-sudo apt install libdatachannel-dev   # or build from source
-```
-
-Build:
-
-```bash
-cmake -S . -B build -DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON
-cmake --build build
-```
-
-The CMake library target is `magpie::webrtc`.
-
-> **Note:** Zeroconf/mDNS discovery is always included in the core library — no extra flag or dependency needed. It uses a bundled mDNS implementation with standard POSIX sockets.
-
----
-
-## Supported Platforms
-
-- **C++ standard:** C++14
-- **Linux** (x86\_64, ARM, Raspberry Pi, NVIDIA Jetson)
+> Network discovery (mDNS/Zeroconf) is always included in the core library — no extra flag or dependency needed.
 
 ---
 
 ## Quick Start
 
-### Streaming
+### ZMQ Streaming
 
 **Writer:**
 
@@ -223,10 +141,8 @@ int main() {
 
     ZmqStreamWriter writer("tcp://*:5555");
     int id = 0;
-
     while (true) {
         StringFrame frame("Hello " + std::to_string(id++));
-        Logger::info("Writing frame... ");
         writer.write(frame, "/mytopic");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -238,102 +154,83 @@ int main() {
 ```cpp
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/zmq_stream_reader.hpp>
-#include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
 int main() {
     using namespace magpie;
 
     ZmqStreamReader reader("tcp://127.0.0.1:5555", "/mytopic");
-
     while (true) {
         std::unique_ptr<Frame> frame;
         std::string topic;
-
-        bool ok = reader.read(frame, topic, 3.0);
-        if (!ok) {
-            Logger::info("Reader: no frame (read returned false)");
-            continue;
+        if (reader.read(frame, topic, /*timeoutSec=*/3.0)) {
+            auto* sf = dynamic_cast<StringFrame*>(frame.get());
+            Logger::info(topic + ": " + sf->value());
         }
-
-        auto* tf = dynamic_cast<StringFrame*>(frame.get());
-        Logger::info("Reader: got frame topic=" + topic + " value=" + tf->value());
     }
 }
 ```
 
-### Request / Response RPC
+---
 
-**Requester:**
-
-```cpp
-#include <magpie/transport/zmq_rpc_requester.hpp>
-#include <magpie/serializer/value.hpp>
-#include <magpie/utils/logger.hpp>
-
-#include <iostream>
-
-int main() {
-    using namespace magpie;
-
-    ZmqRpcRequester client("tcp://127.0.0.1:5556");
-
-    Value::Dict request;
-    request["message"] = Value::fromString("Hello from C++");
-    request["count"]   = Value::fromInt(42);
-
-    try {
-        Logger::info("Sending RPC request...");
-        Value response = client.call(Value::fromDict(request), 5.0);
-        Logger::info("Received response: " + response.toDebugString());
-    } catch (const TimeoutError& e) {
-        Logger::error(std::string("RPC timeout: ") + e.what());
-    } catch (const std::exception& e) {
-        Logger::error(std::string("RPC error: ") + e.what());
-    }
-
-    client.close();
-}
-```
+### ZMQ Request / Response RPC
 
 **Responder:**
 
 ```cpp
 #include <magpie/transport/zmq_rpc_responder.hpp>
-#include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
-#include <magpie/serializer/value.hpp>
-
-#include <iostream>
 
 int main() {
     using namespace magpie;
 
     ZmqRpcResponder server("tcp://*:5556");
-
-    auto onRequest = [](const Value& req) -> Value {
-        Logger::info("on_request:\n" + req.toDebugString());
-        return req;
-    };
-
     while (true) {
         try {
-            bool ok = server.handleOnce(onRequest, 3.0);
-            if (!ok) {
-                Logger::info("responder: no request received.");
-                continue;
-            }
+            server.handleOnce([](const Value& req) -> Value {
+                Logger::info("request: " + req.toDebugString());
+                return req;  // echo
+            }, /*timeoutSec=*/1.0);
         } catch (const std::exception& e) {
-            Logger::error(std::string("responder error: ") + e.what());
+            Logger::error(std::string("error: ") + e.what());
             break;
         }
     }
 }
 ```
 
+**Requester:**
+
+```cpp
+#include <magpie/transport/zmq_rpc_requester.hpp>
+#include <magpie/transport/timeout_error.hpp>
+#include <magpie/utils/logger.hpp>
+
+int main() {
+    using namespace magpie;
+
+    ZmqRpcRequester client("tcp://127.0.0.1:5556");
+
+    Value::Dict req;
+    req["action"] = Value::fromString("greet");
+    req["name"]   = Value::fromString("Bob");
+
+    try {
+        Value response = client.call(Value::fromDict(req), /*timeoutSec=*/3.0);
+        Logger::info("response: " + response.toDebugString());
+    } catch (const TimeoutError& e) {
+        Logger::error(std::string("timeout: ") + e.what());
+    }
+
+    client.close();
+}
+```
+
+---
+
 ### MQTT Streaming
 
-All MQTT components share a single `MqttConnection` to the broker.
+MQTT uses a **shared connection** — create it once, pass it to any number of writers, readers, and RPC components.
 
 **Writer:**
 
@@ -349,7 +246,6 @@ int main() {
     conn->connect();
 
     MqttStreamWriter writer(conn);
-
     StringFrame frame("hello from C++");
     writer.write(frame, "sensors/temperature");
 
@@ -372,12 +268,11 @@ int main() {
     conn->connect();
 
     MqttStreamReader reader(conn, "sensors/+");
-
     std::unique_ptr<Frame> frame;
     std::string topic;
-    if (reader.read(frame, topic, 5.0)) {
+    if (reader.read(frame, topic, /*timeoutSec=*/5.0)) {
         auto* sf = dynamic_cast<StringFrame*>(frame.get());
-        Logger::info("[" + topic + "] " + sf->value);
+        Logger::info("[" + topic + "] " + sf->value());
     }
 
     reader.close();
@@ -385,36 +280,13 @@ int main() {
 }
 ```
 
-### MQTT RPC
+---
 
-**Requester:**
-
-```cpp
-#include <magpie/serializer/value.hpp>
-#include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/mqtt_rpc_requester.hpp>
-
-int main() {
-    using namespace magpie;
-
-    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
-    conn->connect();
-
-    MqttRpcRequester req(conn, "robot/motion");
-
-    Value::Dict d;
-    d["action"] = Value::fromString("move");
-    Value response = req.call(Value::fromDict(d), 5.0);
-
-    req.close();
-    conn->disconnect();
-}
-```
+### MQTT Request / Response RPC
 
 **Responder:**
 
 ```cpp
-#include <magpie/serializer/value.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/mqtt_rpc_responder.hpp>
 
@@ -424,38 +296,89 @@ int main() {
     auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     conn->connect();
 
-    MqttRpcResponder rsp(conn, "robot/motion");
+    MqttRpcResponder server(conn, "myservice/actions");
+    while (true) {
+        server.handleOnce([](const Value& req) -> Value {
+            return Value::fromString("ok");
+        }, /*timeoutSec=*/1.0);
+    }
 
-    rsp.handleOnce([](const Value& req) -> Value {
-        return Value::fromString("ok");
-    }, /*timeoutSec=*/10.0);
-
-    rsp.close();
     conn->disconnect();
 }
 ```
 
+**Requester:**
+
+```cpp
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_rpc_requester.hpp>
+#include <magpie/transport/timeout_error.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    conn->connect();
+
+    MqttRpcRequester client(conn, "myservice/actions");
+    try {
+        Value::Dict d;
+        d["action"] = Value::fromString("move");
+        Value response = client.call(Value::fromDict(d), /*timeoutSec=*/5.0);
+        Logger::info("response: " + response.toDebugString());
+    } catch (const TimeoutError& e) {
+        Logger::error(std::string("timeout: ") + e.what());
+    }
+
+    client.close();
+    conn->disconnect();
+}
+```
+
+---
+
+### MQTT Advanced Options
+
+```cpp
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/mqtt_options.hpp>
+
+MqttOptions opts;
+opts.auth.mode     = "username_password";
+opts.auth.username = "node";
+opts.auth.password = "secret";
+opts.tls.caFile    = "/etc/ssl/certs/ca-certificates.crt";
+opts.tls.verifyPeer = true;
+opts.will.enabled  = true;
+opts.will.topic    = "nodes/node-01/status";
+opts.will.payload  = "offline";
+opts.will.qos      = 1;
+opts.will.retain   = true;
+opts.defaults.publishQos = 1;
+
+auto conn = std::make_shared<MqttConnection>(
+    "wss://broker.example.com:8884/mqtt", "node-01", opts);
+conn->connect();
+```
+
+| URI scheme | Transport |
+|---|---|
+| `mqtt://host:1883` | Plain TCP |
+| `mqtts://host:8883` | TLS/TCP |
+| `ws://host:9001/mqtt` | WebSocket |
+| `wss://host:8884/mqtt` | TLS WebSocket |
+
+---
+
 ### WebRTC Streaming
 
-WebRTC transport enables **P2P communication over the internet** — no broker in the data path after the initial handshake.  A `WebRtcConnection` is shared by all writers, readers, and RPC components, mirroring the `MqttConnection` pattern.
+WebRTC enables **P2P communication over the internet** — no broker in the data path after the initial signaling handshake. Signaling is exchanged via MQTT (internet) or ZMQ (LAN).
 
-Signaling (SDP offer/answer + ICE candidates) is exchanged via MQTT.  Role negotiation (offerer vs answerer) is fully automatic.
-
-> **Note — no RTP media tracks in C++.**  The C++ implementation uses [libdatachannel](https://github.com/paullouisageneau/libdatachannel), which provides data channels only.  There is no RTP/SRTP media track stack (no equivalent of aiortc or a browser's `RTCPeerConnection` media pipeline).  Video and audio frames are always transported over WebRTC data channels — either the `magpie-media` unreliable channel (`useMediaChannels=true`, default) or the reliable `magpie` channel (`useMediaChannels=false`).  When interoperating with a Python or JS peer that has `use_media_channels=True` and sends real RTP video tracks, set `useMediaChannels=false` on the C++ side so that both peers agree to use the data-channel path for video/audio.
-
-`WebRtcStreamWriter` routes internally based on frame type and the `useMediaChannels` option (default `true`):
-
-| Frame type | `useMediaChannels=true` | `useMediaChannels=false` |
-|---|---|---|
-| `ImageFrameRaw` / `AudioFrameRaw` | `magpie-media` unreliable data channel | reliable `magpie` data channel (`{"type":"media","topic":"..."}`) |
-| everything else | reliable `magpie` data channel | reliable `magpie` data channel |
-
-With `useMediaChannels=false`, video and audio frames are topic-routed just like regular data, enabling **multiple simultaneous video/audio topics** (e.g. two cameras on different topics).
+> **Note:** The C++ implementation uses [libdatachannel](https://github.com/paullouisageneau/libdatachannel), which provides data channels only — there is no RTP/SRTP media track stack. All frames (including video and audio) are transported over WebRTC data channels. When interoperating with a Python peer that has `use_media_channels=True`, set `useMediaChannels=false` on the C++ side so both peers agree to use the data-channel path.
 
 **Writer:**
 
 ```cpp
-#include <magpie/frames/image_frame.hpp>
 #include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_connection.hpp>
@@ -464,26 +387,17 @@ With `useMediaChannels=false`, video and audio frames are topic-routed just like
 int main() {
     using namespace magpie;
 
-    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    auto sig  = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     sig->connect();
 
     auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
-    if (!conn->connect(30.0)) {
-        Logger::error("peer not found");
-        return 1;
-    }
+    if (!conn->connect(30.0)) { return 1; }
 
     WebRtcStreamWriter writer(conn);
 
-    // Send arbitrary data over the data channel
     DictFrame state;
     state["x"] = 1.0;
     writer.write(state, "robot/state");
-
-    // Send a video frame over the magpie-media unreliable channel
-    // (capture a real frame here; this is just a placeholder allocation)
-    ImageFrameRaw img(width * height * 3, "raw", width, height, 3, "BGR");
-    writer.write(img);   // topic defaults to "video"
 
     writer.close();
     conn->disconnect();
@@ -494,7 +408,6 @@ int main() {
 **Reader:**
 
 ```cpp
-#include <magpie/frames/image_frame.hpp>
 #include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_connection.hpp>
 #include <magpie/transport/webrtc_stream_reader.hpp>
@@ -502,77 +415,31 @@ int main() {
 int main() {
     using namespace magpie;
 
-    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    auto sig  = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     sig->connect();
 
     auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
     if (!conn->connect(30.0)) { return 1; }
 
-    // Read from a data channel topic
     WebRtcStreamReader reader(conn, "robot/state");
-
-    // Read video frames (magpie-media channel)
-    WebRtcStreamReader vreader(conn, WebRtcStreamReader::VIDEO_TOPIC);
-
     while (true) {
         std::unique_ptr<Frame> frame;
         std::string topic;
-
-        if (reader.read(frame, topic, 3.0)) {
+        if (reader.read(frame, topic, /*timeoutSec=*/3.0))
             Logger::info("data: " + topic);
-        }
-        if (vreader.read(frame, topic, 0.0)) {
-            auto* img = dynamic_cast<ImageFrameRaw*>(frame.get());
-            Logger::info("video frame " + std::to_string(img->width()) +
-                         "x" + std::to_string(img->height()));
-        }
     }
 
     reader.close();
-    vreader.close();
     conn->disconnect();
     sig->disconnect();
 }
 ```
 
-### WebRTC RPC
+---
 
-RPC over WebRTC uses the bidirectional data channel — no broker in the hot path, lower latency than MQTT RPC.
+### WebRTC Request / Response RPC
 
-**Requester:**
-
-```cpp
-#include <magpie/transport/mqtt_connection.hpp>
-#include <magpie/transport/webrtc_connection.hpp>
-#include <magpie/transport/webrtc_rpc_requester.hpp>
-
-int main() {
-    using namespace magpie;
-
-    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
-    sig->connect();
-
-    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot-rpc");
-    if (!conn->connect(30.0)) { return 1; }
-
-    WebRtcRpcRequester req(conn, "robot/motion");
-
-    Value::Dict d;
-    d["action"] = Value::fromString("move");
-    d["x"]      = Value::fromFloat(1.0);
-
-    try {
-        Value response = req.call(Value::fromDict(d), 5.0);
-        Logger::info("response: " + response.toDebugString());
-    } catch (const TimeoutError& e) {
-        Logger::error(std::string("timeout: ") + e.what());
-    }
-
-    req.close();
-    conn->disconnect();
-    sig->disconnect();
-}
-```
+No broker in the hot path — the data channel is bidirectional P2P.
 
 **Responder:**
 
@@ -584,24 +451,56 @@ int main() {
 int main() {
     using namespace magpie;
 
-    auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    auto sig  = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
     sig->connect();
-
-    auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot-rpc");
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-node-rpc");
     if (!conn->connect(30.0)) { return 1; }
 
-    WebRtcRpcResponder rsp(conn, "robot/motion");
+    WebRtcRpcResponder server(conn, "service/actions");
+    while (true) {
+        server.handleOnce([](const Value& req) -> Value {
+            return Value::fromString("ok");
+        }, /*timeoutSec=*/1.0);
+    }
 
-    rsp.handleOnce([](const Value& req) -> Value {
-        Logger::info("request: " + req.toDebugString());
-        return Value::fromString("ok");
-    }, /*timeoutSec=*/10.0);
-
-    rsp.close();
     conn->disconnect();
     sig->disconnect();
 }
 ```
+
+**Requester:**
+
+```cpp
+#include <magpie/transport/mqtt_connection.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <magpie/transport/webrtc_rpc_requester.hpp>
+#include <magpie/transport/timeout_error.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto sig  = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+    sig->connect();
+    auto conn = std::make_shared<WebRtcConnection>(sig, "my-node-rpc");
+    if (!conn->connect(30.0)) { return 1; }
+
+    WebRtcRpcRequester client(conn, "service/actions");
+    try {
+        Value::Dict d;
+        d["action"] = Value::fromString("move");
+        Value response = client.call(Value::fromDict(d), /*timeoutSec=*/5.0);
+        Logger::info("response: " + response.toDebugString());
+    } catch (const TimeoutError& e) {
+        Logger::error(std::string("timeout: ") + e.what());
+    }
+
+    client.close();
+    conn->disconnect();
+    sig->disconnect();
+}
+```
+
+---
 
 ### WebRTC Advanced Options
 
@@ -609,47 +508,256 @@ int main() {
 #include <magpie/transport/webrtc_options.hpp>
 
 WebRtcOptions opts;
-
-// Disable STUN for pure-LAN use (faster connection, no external server needed)
-opts.iceServers = {};
-
-// Add a TURN relay server for strict NAT / corporate firewall scenarios
-opts.iceServers.push_back({"turn:myturn.server:3478", "user", "pass"});
+opts.iceServers = {};                                                // disable STUN (LAN use)
+opts.iceServers.push_back({"turn:myturn.server:3478", "u", "p"});  // add TURN relay
 opts.iceTransportPolicy = "relay";   // force relay only
-
-// Auto-reconnect when the peer connection drops
-opts.reconnect = true;
-
-// Route video/audio via the reliable data channel instead of magpie-media
-// (useful when connecting to a peer without magpie-media support)
-opts.useMediaChannels = false;
+opts.reconnect = true;               // auto-reconnect on disconnect
+opts.useMediaChannels = false;       // route all frames over the reliable data channel
 
 auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot", opts);
 ```
 
-#### MQTT URI schemes
+---
 
-| URI | Transport |
-|-----|-----------|
-| `mqtt://host:1883` | Plain TCP |
-| `mqtts://host:8883` | TLS/TCP |
-| `ws://host:9001/mqtt` | WebSocket |
-| `wss://host:8884/mqtt` | TLS WebSocket |
+### Schema-based RPC
 
-#### Advanced options (TLS, auth, reconnect)
+`JsonRpcSchema` adds JSON-RPC 2.0 dispatch on top of any MAGPIE transport. Define your API once — shape, description, and types — then attach handlers and call methods by name. The same schema object works on both sides.
+
+**Responder — two ways to define methods:**
 
 ```cpp
-MqttOptions opts;
-opts.auth.mode     = "username_password";
-opts.auth.username = "user";
-opts.auth.password = "pass";
-opts.tls.caFile    = "/etc/ssl/certs/ca-certificates.crt";
-opts.reconnect.maxDelaySec = 60;
+#include <magpie/transport/zmq_rpc_responder.hpp>
+#include <magpie/schema/json_rpc_schema.hpp>
 
-auto conn = std::make_shared<MqttConnection>("mqtts://broker.example.com:8883",
-                                              "my-client-id", opts);
-conn->connect();
+int main() {
+    using namespace magpie;
+
+    // Way A: load from JSON, attach handlers with set_handler()
+    auto schema = JsonRpcSchema::from_json_string(R"([
+        {
+            "name": "add",
+            "description": "Add two numbers",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+                "required": ["a", "b"]
+            }
+        }
+    ])");
+
+    schema->set_handler("add", [](const Value::Dict& p) -> Value {
+        return Value::fromDouble(p.at("a").asDouble() + p.at("b").asDouble());
+    });
+
+    // Way B: register_method() with inline handler and description
+    schema->register_method("mul",
+        [](const Value::Dict& p) -> Value {
+            return Value::fromDouble(p.at("a").asDouble() * p.at("b").asDouble());
+        },
+        "Multiply two numbers");
+
+    ZmqRpcResponder server("tcp://*:5556", nullptr, true, schema);
+    while (true)
+        server.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+}
 ```
+
+The JSON string or file uses standard MCP / JSON Schema format. `description` and `outputSchema` are optional:
+
+```json
+[
+  {
+    "name": "convert",
+    "description": "Convert a value from one unit to another",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "value":     {"type": "number"},
+        "from_unit": {"type": "string"},
+        "to_unit":   {"type": "string"}
+      },
+      "required": ["value", "from_unit", "to_unit"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {"result": {"type": "number"}, "unit": {"type": "string"}}
+    }
+  }
+]
+```
+
+**Requester — schema-based `call()`:**
+
+```cpp
+#include <magpie/transport/zmq_rpc_requester.hpp>
+#include <magpie/schema/json_rpc_schema.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto schema = JsonRpcSchema::from_json_string(R"([
+        {"name": "add", "description": "Add two numbers"},
+        {"name": "mul", "description": "Multiply two numbers"}
+    ])");
+
+    ZmqRpcRequester client("tcp://127.0.0.1:5556", nullptr, {}, 2.0, schema);
+
+    // Schema-based call — JSON-RPC wrap/unwrap handled automatically
+    Value result = client.call("add", {{"a", Value::fromDouble(3)}, {"b", Value::fromDouble(4)}});
+    Logger::info("add: " + result.toDebugString());   // 7.0
+
+    try {
+        client.call("nonexistent", {});
+    } catch (const JsonRpcError& e) {
+        Logger::warning(std::to_string(e.code()) + " " + e.message());  // -32601 Method not found
+    }
+
+    client.close();
+}
+```
+
+---
+
+### MCP Integration
+
+MAGPIE C++ has native MCP server support — no separate MCP server process required.
+
+`McpSchema` extends `JsonRpcSchema` with the full MCP handshake. Any registered method is automatically exposed as an MCP tool. A FastMCP `Client` using the Python `McpTransport` can call those tools over ZMQ, MQTT, or WebRTC without any port forwarding or VPN.
+
+#### Server side — serve MCP tools over any transport
+
+```cpp
+#include <magpie/transport/zmq_rpc_responder.hpp>
+#include <magpie/schema/mcp_schema.hpp>
+
+int main() {
+    using namespace magpie;
+
+    auto schema = McpSchema::from_json_string(R"([
+        {
+            "name": "translate",
+            "description": "Translate text into the target language",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text":        {"type": "string"},
+                    "target_lang": {"type": "string"}
+                },
+                "required": ["text", "target_lang"]
+            }
+        },
+        {
+            "name": "summarize",
+            "description": "Summarize text to at most max_length characters",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text":       {"type": "string"},
+                    "max_length": {"type": "integer"}
+                },
+                "required": ["text", "max_length"]
+            }
+        }
+    ])", "my-service", "1.0.0");
+
+    schema->set_handler("translate", [](const Value::Dict& p) -> Value {
+        const std::string lang = p.at("target_lang").asString();
+        const std::string text = p.at("text").asString();
+        return Value::fromString("[" + lang + "] " + text);
+    });
+
+    schema->set_handler("summarize", [](const Value::Dict& p) -> Value {
+        const std::string text = p.at("text").asString();
+        const int maxLen = static_cast<int>(p.at("max_length").asInt());
+        return Value::fromString(text.substr(0, maxLen));
+    });
+
+    // ZMQ — no broker needed
+    ZmqRpcResponder server("tcp://*:5556", nullptr, true, schema);
+    while (true)
+        server.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+}
+```
+
+Attach the same `schema` to any responder:
+
+```cpp
+// MQTT — service behind NAT
+auto conn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
+conn->connect();
+MqttRpcResponder server(conn, "node-01", nullptr, {}, -1, schema);
+
+// WebRTC — P2P, lowest latency
+auto conn = std::make_shared<WebRtcConnection>(sig, "node-01");
+conn->connect(30.0);
+WebRtcRpcResponder server(conn, "node-01", {}, schema);
+```
+
+Serve loop is the same for all:
+
+```cpp
+while (true)
+    server.handleOnce(nullptr, 1.0);
+```
+
+#### Agent / cloud side — call tools with FastMCP Client
+
+The Python `McpTransport` connects a FastMCP `Client` to any MAGPIE C++ MCP server:
+
+```python
+import asyncio
+from fastmcp import Client
+from fastmcp.exceptions import ToolError
+from luxai.magpie.adapters.mcp import McpTransport
+from luxai.magpie.transport import ZMQRpcRequester
+
+async def main():
+    req = ZMQRpcRequester("tcp://127.0.0.1:5556")
+
+    async with Client(McpTransport(req)) as client:
+        tools = await client.list_tools()
+        for tool in tools:
+            print(f"  {tool.name}: {tool.description}")
+
+        result = await client.call_tool("translate", {"text": "Hello", "target_lang": "fr"})
+        print(result.content[0].text)
+
+        try:
+            await client.call_tool("translate", {"text": "Hello"})   # missing target_lang
+        except ToolError as e:
+            print(f"tool error: {e}")
+
+    req.close()
+
+asyncio.run(main())
+```
+
+For MQTT or WebRTC, just swap the requester — `McpTransport` is identical:
+
+```python
+# MQTT
+from luxai.magpie.transport.mqtt import MqttConnection
+from luxai.magpie.transport import MqttRpcRequester
+
+conn = MqttConnection("mqtt://broker.hivemq.com:1883")
+conn.connect()
+req = MqttRpcRequester(conn, service_name="node-01")
+
+async with Client(McpTransport(req)) as client:
+    result = await client.call_tool("translate", {"text": "Hello", "target_lang": "fr"})
+```
+
+#### Loading tools from a JSON file
+
+```cpp
+auto schema = McpSchema::from_json_file("tools.json", "my-service", "1.0.0");
+
+schema->set_handler("translate", [](const Value::Dict& p) -> Value {
+    return Value::fromString("[" + p.at("target_lang").asString() + "] " + p.at("text").asString());
+});
+```
+
+---
 
 ### Network Discovery
 
@@ -658,23 +766,17 @@ conn->connect();
 ```cpp
 #include <magpie/discovery/zconf_discovery.hpp>
 #include <magpie/utils/logger.hpp>
-#include <magpie/utils/common.hpp>
 
-#include <thread>
 #include <chrono>
+#include <thread>
 
 int main() {
     using namespace magpie;
 
-    const std::string nodeId = getUniqueId();
-    const std::uint16_t port = 5555;
-    const std::string payload = R"({"role":"robot"})";
-
     ZconfDiscovery disc;
     disc.start();
-    disc.advertise(nodeId, port, "zmq", payload);
-
-    Logger::info("Advertising node_id=" + nodeId + " on port=" + std::to_string(port));
+    disc.advertise("my-node", 5555, "zmq", R"({"role":"service"})");
+    Logger::info("advertising my-node on port 5555");
 
     try {
         while (true)
@@ -691,8 +793,8 @@ int main() {
 #include <magpie/discovery/zconf_discovery.hpp>
 #include <magpie/utils/logger.hpp>
 
-#include <thread>
 #include <chrono>
+#include <thread>
 
 int main() {
     using namespace magpie;
@@ -700,28 +802,15 @@ int main() {
     ZconfDiscovery disc;
     disc.start();
 
-    try {
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-
-            auto nodes = disc.listNodes();
-            if (nodes.empty()) {
-                Logger::debug("No nodes discovered...");
-                continue;
-            }
-
-            Logger::info("Discovered nodes:");
-            for (const auto& info : nodes) {
-                const std::string bestIp = ZconfDiscovery::pickBestIp(info.ips);
-                Logger::info(
-                    "  node_id=" + info.nodeId +
-                    "  port=" + std::to_string(info.port) +
-                    "  payload=" + info.payload +
-                    "  (best ip: " + bestIp + ")"
-                );
-            }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        for (const auto& info : disc.listNodes()) {
+            const std::string ip = ZconfDiscovery::pickBestIp(info.ips);
+            Logger::info("node=" + info.nodeId +
+                         " tcp://" + ip + ":" + std::to_string(info.port) +
+                         " payload=" + info.payload);
         }
-    } catch (...) {}
+    }
 
     disc.close();
 }
@@ -729,54 +818,19 @@ int main() {
 
 ---
 
-## Architecture Overview
+## Architecture
 
-### Transports
+MAGPIE C++ is built around four abstract base classes — `StreamWriter`, `StreamReader`, `RpcRequester`, `RpcResponder` — that absorb all threading, queuing, and lifecycle complexity. Transport implementations fill in two or three pure transport methods; everything else is handled by the base classes. This makes adding a new transport a matter of minutes, not days, and keeps user code completely transport-agnostic.
 
-| Transport | Streaming | RPC | Package |
-|-----------|---------|-----|---------|
-| ZeroMQ | `ZmqStreamWriter` / `ZmqStreamReader` | `ZmqRpcRequester` / `ZmqRpcResponder` | core |
-| MQTT (paho) | `MqttStreamWriter` / `MqttStreamReader` | `MqttRpcRequester` / `MqttRpcResponder` | `magpie::mqtt` |
-
-The transport layer is **pluggable**: `StreamWriter`, `StreamReader`, `RpcRequester`, and `RpcResponder` are abstract base classes. Switching from ZMQ to MQTT (or any future transport) requires no changes to application-level frame or node code.
-
-The MQTT transport shares a single `MqttConnection` per broker across all writers, readers, and RPC components, reusing one TCP/TLS connection.
-
-### Serialization
-
-- `Serializer` abstract interface
-- Msgpack implementation — wire-compatible with Python MAGPIE
-
-### Node Helpers
-
-Base classes for long-running processes: `BaseNode`, `ProcessNode`, `ServerNode`, `SourceNode`, `SinkNode`.
-These simplify lifecycle management, threading, and clean shutdown.
-
-### Frames
-
-Typed containers for structured payloads:
-
-- `Frame` (base class)
-- Audio: `AudioFrameRaw`, `AudioFrameFlac` (requires `MAGPIE_WITH_AUDIO`)
-- Image: `ImageFrameRaw`, `ImageFrameJpeg` (requires `MAGPIE_WITH_VIDEO`)
-
----
-
-## Used in QTrobot
-
-MAGPIE-CPP powers the internal messaging infrastructure of [QTrobot](https://luxai.com/qtrobot-for-research/) at **LuxAI**, handling audio/video streaming, distributed components, and SDK communication between robot subsystems.
-
----
-
-## Project Status
-
-**Status:** Beta — actively used in production-like systems. APIs are largely stable; minor changes are still possible.
-
-**Roadmap:**
-- ~~Additional transports (MQTT)~~ ✓ Done — `magpie::mqtt` sub-package
-- Additional transports (WebRTC)
-- Multi-transport support
-- Higher-level pipeline abstractions for AI workloads
+| Component | Description |
+|---|---|
+| `ZmqStream{Writer,Reader}` / `ZmqRpc{Requester,Responder}` | ZeroMQ transport (core) |
+| `MqttStream{Writer,Reader}` / `MqttRpc{Requester,Responder}` | MQTT transport (`magpie::mqtt`) |
+| `WebRtcStream{Writer,Reader}` / `WebRtcRpc{Requester,Responder}` | WebRTC transport (`magpie::webrtc`) |
+| `JsonRpcSchema` | JSON-RPC 2.0 method dispatch + envelope wrap/unwrap (core) |
+| `McpSchema` | MCP protocol server — extends `JsonRpcSchema`, adds `initialize` / `tools/list` / `tools/call` (core) |
+| `BaseNode`, `SourceNode`, `SinkNode`, `ServerNode`, `ProcessNode` | Lifecycle and threading helpers (core) |
+| `ZconfDiscovery` | mDNS/Zeroconf node advertisement and scanning (core) |
 
 ---
 

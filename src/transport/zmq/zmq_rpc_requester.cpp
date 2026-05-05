@@ -61,8 +61,9 @@ struct ZmqRpcRequester::PendingCall {
 ZmqRpcRequester::ZmqRpcRequester(const std::string& endpoint,
                                  std::shared_ptr<Serializer> serializer,
                                  const std::string& identity,
-                                 double ackTimeoutSec)
-    : RpcRequester("ZmqRpcRequester")
+                                 double ackTimeoutSec,
+                                 std::shared_ptr<BaseSchema> schema)
+    : RpcRequester("ZmqRpcRequester", std::move(schema))
     , endpoint_{endpoint}
     , ackTimeoutSec_{ackTimeoutSec}
 {

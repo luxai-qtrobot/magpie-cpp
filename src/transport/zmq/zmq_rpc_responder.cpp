@@ -33,9 +33,10 @@ zmq_ctx_t* ZmqRpcResponder::sharedInprocContext() {
 }
 
 ZmqRpcResponder::ZmqRpcResponder(const std::string& endpoint,
-                                 std::shared_ptr<Serializer> serializer,                                 
-                                 bool bind)
-    : RpcResponder("ZmqRpcResponder")
+                                 std::shared_ptr<Serializer> serializer,
+                                 bool bind,
+                                 std::shared_ptr<BaseSchema> schema)
+    : RpcResponder("ZmqRpcResponder", std::move(schema))
     , endpoint_{endpoint}
     , bind_{bind}
 {

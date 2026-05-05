@@ -59,7 +59,8 @@ public:
                                std::shared_ptr<Serializer>     serializer    = nullptr,
                                const std::string&              instanceName  = std::string(),
                                double                          ackTimeoutSec = 2.0,
-                               int                             qos           = -1);
+                               int                             qos           = -1,
+                               std::shared_ptr<BaseSchema>     schema        = nullptr);
 
     ~MqttRpcRequester() override;
 

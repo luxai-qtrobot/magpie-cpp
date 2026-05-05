@@ -17,8 +17,9 @@ MqttRpcResponder::MqttRpcResponder(std::shared_ptr<MqttConnection> connection,
                                      const std::string&              serviceName,
                                      std::shared_ptr<Serializer>     serializer,
                                      const std::string&              instanceName,
-                                     int                             qos)
-    : RpcResponder(instanceName.empty() ? "MqttRpcResponder" : instanceName)
+                                     int                             qos,
+                                     std::shared_ptr<BaseSchema>     schema)
+    : RpcResponder(instanceName.empty() ? "MqttRpcResponder" : instanceName, std::move(schema))
     , connection_(std::move(connection))
     , serviceName_(serviceName)
     , qos_(qos)

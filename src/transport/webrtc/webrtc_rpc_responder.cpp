@@ -14,8 +14,9 @@ namespace magpie {
 
 WebRtcRpcResponder::WebRtcRpcResponder(std::shared_ptr<WebRtcConnection> connection,
                                          const std::string&                serviceName,
-                                         const std::string&                instanceName)
-    : RpcResponder(instanceName.empty() ? "WebRtcRpcResponder" : instanceName)
+                                         const std::string&                instanceName,
+                                         std::shared_ptr<BaseSchema>       schema)
+    : RpcResponder(instanceName.empty() ? "WebRtcRpcResponder" : instanceName, std::move(schema))
     , connection_(std::move(connection))
     , serviceName_(serviceName)
 {

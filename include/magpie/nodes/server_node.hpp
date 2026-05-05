@@ -52,13 +52,15 @@ public:
      *
      * @param responder      Transport-level responder (e.g., ZmqRpcResponder).
      * @param handler        Function: handler(requestObj) -> responseObj.
+     *                       Optional when a schema is set on the responder.
+     *                       When both are provided, handler takes priority.
      * @param maxWorkers     Number of worker threads running the handler.
-     * @param pollTimeoutSec Small timeout used to poll for new requests in I/O loop.     
+     * @param pollTimeoutSec Small timeout used to poll for new requests in I/O loop.
      * @param paused         Start paused if true.
      * @param name           Node name (used for logging/debugging).
      */
     ServerNode(std::shared_ptr<RpcResponder> responder,
-               Handler handler,
+               Handler handler = nullptr,
                std::size_t maxWorkers = 4,
                double pollTimeoutSec = 0.01,
                bool paused = false,
@@ -90,9 +92,8 @@ protected:
         if (!responder_) {
             throw std::runtime_error(name() + ": responder is null");
         }
-        if (!handler_) {
-            throw std::runtime_error(name() + ": handler is empty");
-        }
+        if (!handler_ && !responder_->schema())
+            throw std::runtime_error(name() + ": a handler or a schema on the responder is required");
         if (maxWorkers_ == 0) {
             throw std::runtime_error(name() + ": maxWorkers must be > 0");
         }
@@ -239,17 +240,27 @@ private:
                 jobs_.pop();
             }
 
-            // Run handler outside lock
+            // Run handler or schema dispatch outside lock
             Object response;
+            bool skip_reply = false;
             try {
-                response = handler_(job.request);
+                if (handler_) {
+                    response = handler_(job.request);
+                } else {
+                    response = responder_->schema()->dispatch(job.request);
+                    // schema returns null for notifications — no reply needed
+                    if (response.type() == Value::Type::Null)
+                        skip_reply = true;
+                }
             } catch (const std::exception& e) {
                 Logger::warning(name() + ": handler error: " + std::string(e.what()));
-                continue; // skip reply (same as your current behavior)
+                continue;
             } catch (...) {
                 Logger::warning(name() + ": handler error: unknown");
                 continue;
             }
+
+            if (skip_reply) continue;
 
             // Enqueue reply
             {
