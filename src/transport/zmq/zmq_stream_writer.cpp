@@ -61,12 +61,15 @@ ZmqStreamWriter::ZmqStreamWriter(const std::string& endpoint,
     }
 
     // Delivery mode: keep only the latest message per subscriber.
-    // Both must be set before bind/connect.
+    // ZMQ_CONFLATE is intentionally NOT set: it is incompatible with multipart
+    // messages (ZMQ docs: "not supported with multipart messages"). With CONFLATE
+    // on PUB, only the last frame is kept, so the topic frame is silently
+    // discarded and the SUB subscription filter drops every message.
+    // ZMQ_SNDHWM=1 is sufficient: it caps the per-subscriber send queue to one
+    // message, providing "drop-old" semantics without breaking multipart.
     if (delivery_ == "latest") {
         int hwm = 1;
         zmq_setsockopt(socket_, ZMQ_SNDHWM, &hwm, sizeof(hwm));
-        int conflate = 1;
-        zmq_setsockopt(socket_, ZMQ_CONFLATE, &conflate, sizeof(conflate));
     }
 
     int rc = 0;
