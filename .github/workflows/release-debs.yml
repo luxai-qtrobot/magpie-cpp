@@ -36,6 +36,7 @@ jobs:
             libpaho-mqtt-dev libpaho-mqttpp-dev \
             libflac-dev \
             libturbojpeg0-dev \
+            libcurl4-openssl-dev \
             libfmt-dev \
             dpkg-dev fakeroot
 

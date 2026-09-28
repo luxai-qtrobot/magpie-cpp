@@ -75,14 +75,14 @@ endif()
 
 if(MAGPIE_WITH_WEBRTC)
     add_executable(example_webrtc_stream_writer webrtc/webrtc_stream_writer.cpp)
-    target_link_libraries(example_webrtc_stream_writer PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    target_link_libraries(example_webrtc_stream_writer PRIVATE magpie::core magpie::webrtc)
 
     add_executable(example_webrtc_stream_reader webrtc/webrtc_stream_reader.cpp)
-    target_link_libraries(example_webrtc_stream_reader PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    target_link_libraries(example_webrtc_stream_reader PRIVATE magpie::core magpie::webrtc)
 
     add_executable(example_webrtc_rpc_requester webrtc/webrtc_rpc_requester.cpp)
-    target_link_libraries(example_webrtc_rpc_requester PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    target_link_libraries(example_webrtc_rpc_requester PRIVATE magpie::core magpie::webrtc)
 
     add_executable(example_webrtc_rpc_responder webrtc/webrtc_rpc_responder.cpp)
-    target_link_libraries(example_webrtc_rpc_responder PRIVATE magpie::core magpie::mqtt magpie::webrtc)
+    target_link_libraries(example_webrtc_rpc_responder PRIVATE magpie::core magpie::webrtc)
 endif()

@@ -2,6 +2,7 @@
 
 #include <magpie/frames/image_frame.hpp>
 #include <magpie/frames/audio_frame.hpp>
+#include <magpie/frames/primitive_frames.hpp>
 #include <magpie/transport/timeout_error.hpp>
 #include <magpie/utils/logger.hpp>
 
@@ -80,7 +81,15 @@ void WebRtcStreamReader::onDataMessage(const Value& payload, const std::string& 
             Logger::warning("WebRtcStreamReader: payload is not a dict, dropping");
             return;
         }
-        auto framePtr = Frame::fromDict(payload.asDict());
+        const auto& dict = payload.asDict();
+        const auto name = dict.find("name");
+        std::unique_ptr<Frame> framePtr;
+        if (name != dict.end() && name->second.type() == Value::Type::String) {
+            framePtr = Frame::fromDict(dict);
+        } else {
+            // Python and JS may publish plain objects, without a Frame envelope.
+            framePtr = std::make_unique<DictFrame>(dict);
+        }
         if (!framePtr) {
             Logger::warning("WebRtcStreamReader: Frame::fromDict returned null, dropping");
             return;

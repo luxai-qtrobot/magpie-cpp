@@ -24,14 +24,12 @@ namespace magpie {
 
 struct WebRtcConnection::Impl {
     // ---- Configuration ----
-    std::shared_ptr<MqttConnection> signalConn;
+    std::shared_ptr<WebRtcSignaler> signaler;
     std::string                     sessionId;
     std::string                     peerId;
-    std::string                     signalTopic;   // magpie/webrtc/<sessionId>/signal
     WebRtcOptions                   options;
     std::shared_ptr<Serializer>     serializer;
 
-    MqttConnection::SubscriptionHandle signalHandle{0};
 
     // ---- WebRTC objects ----
     std::shared_ptr<rtc::PeerConnection> pc;
@@ -86,7 +84,7 @@ struct WebRtcConnection::Impl {
     void sendSignal(const Value::Dict& msg) {
         try {
             auto bytes = serializer->serialize(Value::fromDict(msg));
-            signalConn->publish(signalTopic, bytes.data(), bytes.size(), 0, false);
+            signaler->publish(bytes.data(), bytes.size());
         } catch (const std::exception& e) {
             Logger::warning("WebRtcConnection: signal send error: " + std::string(e.what()));
         }
@@ -270,8 +268,7 @@ struct WebRtcConnection::Impl {
         pendingCandidates.clear();
     }
 
-    void onSignalMessage(const std::string& /*topic*/,
-                         const uint8_t*     data,
+    void onSignalMessage(const uint8_t*     data,
                          std::size_t        size) {
         if (disconnecting.load()) return;
 
@@ -691,28 +688,28 @@ struct WebRtcConnection::Impl {
 // WebRtcConnection public API
 // ---------------------------------------------------------------------------
 
-WebRtcConnection::WebRtcConnection(std::shared_ptr<MqttConnection> signalConn,
-                                     const std::string&              sessionId,
-                                     WebRtcOptions                   options)
+WebRtcConnection::WebRtcConnection(std::shared_ptr<WebRtcSignaler> signaler,
+                                    WebRtcOptions options)
     : impl_(std::make_shared<Impl>())
 {
-    impl_->signalConn  = std::move(signalConn);
-    impl_->sessionId   = sessionId;
+    if (!signaler) {
+        throw std::invalid_argument("WebRtcConnection: signaler is null");
+    }
+    impl_->sessionId   = signaler->sessionId();
+    if (impl_->sessionId.empty()) {
+        throw std::invalid_argument("WebRtcConnection: session ID is empty");
+    }
+    impl_->signaler    = std::move(signaler);
     impl_->options     = std::move(options);
     impl_->serializer  = std::make_shared<MsgpackSerializer>();
-    impl_->signalTopic = "magpie/webrtc/" + sessionId + "/signal";
     impl_->peerId      = getUniqueId().substr(0, 12);
-
-    if (!impl_->signalConn) {
-        throw std::invalid_argument("WebRtcConnection: signalConn is null");
-    }
 
     Logger::debug("WebRtcConnection: created, peerId=" + impl_->peerId +
                   ", sessionId=" + impl_->sessionId);
 }
 
 WebRtcConnection::~WebRtcConnection() {
-    disconnect();
+    try { disconnect(); } catch (...) {}
 }
 
 bool WebRtcConnection::connect(double timeoutSec) {
@@ -732,14 +729,12 @@ bool WebRtcConnection::connect(double timeoutSec) {
         impl_->pendingCandidates.clear();
     }
 
-    // Subscribe to signaling topic
+    // Subscribe before sending the first hello.
     auto implPtr = impl_;
-    impl_->signalHandle = impl_->signalConn->addSubscription(
-        impl_->signalTopic,
-        [implPtr](const std::string& topic, const uint8_t* data, std::size_t size) {
-            implPtr->onSignalMessage(topic, data, size);
-        },
-        0);
+    std::weak_ptr<Impl> weakImpl = impl_;
+    impl_->signaler->subscribe([weakImpl](const uint8_t* data, std::size_t size) {
+        if (auto state = weakImpl.lock()) state->onSignalMessage(data, size);
+    });
 
     // Start hello loop in background
     impl_->helloThread = std::thread([implPtr, timeoutSec]() {
@@ -791,10 +786,16 @@ void WebRtcConnection::disconnect() {
         impl_->helloThread.join();
     }
 
-    // Remove signaling subscription
-    if (impl_->signalConn && impl_->signalHandle != 0) {
-        impl_->signalConn->removeSubscription(impl_->signalTopic, impl_->signalHandle);
-        impl_->signalHandle = 0;
+    // Stop the signaler after the hello loop has stopped.
+    if (impl_->signaler) {
+        try { impl_->signaler->unsubscribe(); }
+        catch (const std::exception& e) {
+            Logger::warning("WebRtcConnection: signaler unsubscribe error: " + std::string(e.what()));
+        }
+        try { impl_->signaler->disconnect(); }
+        catch (const std::exception& e) {
+            Logger::warning("WebRtcConnection: signaler disconnect error: " + std::string(e.what()));
+        }
     }
 
     // Tear down WebRTC

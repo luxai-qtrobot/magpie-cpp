@@ -7,7 +7,7 @@ project(magpie
 option(MAGPIE_WITH_AUDIO      "Build audio-related components"  OFF)
 option(MAGPIE_WITH_VIDEO      "Build video-related components"  OFF)
 option(MAGPIE_WITH_MQTT       "Build MQTT transport components" OFF)
-option(MAGPIE_WITH_WEBRTC     "Build WebRTC transport components (requires MAGPIE_WITH_MQTT and libdatachannel)" OFF)
+option(MAGPIE_WITH_WEBRTC     "Build WebRTC transport components (libdatachannel, ZeroMQ and libcurl)" OFF)
 option(MAGPIE_BUILD_TESTS     "Build unit tests"                OFF)
 option(MAGPIE_BUILD_EXAMPLES  "Build examples"                  ON)
 
@@ -220,9 +220,7 @@ endif()
 
 # WebRTC
 if(MAGPIE_WITH_WEBRTC)
-    if(NOT MAGPIE_WITH_MQTT)
-        message(FATAL_ERROR "MAGPIE_WITH_WEBRTC requires MAGPIE_WITH_MQTT=ON")
-    endif()
+    find_package(CURL REQUIRED)
 
     # ---- Find or fetch libdatachannel ----
     # Prefer a system-installed copy; if not found, build from source as static libs
@@ -267,6 +265,8 @@ if(MAGPIE_WITH_WEBRTC)
 
     add_library(magpie_webrtc SHARED
         src/transport/webrtc/webrtc_connection.cpp
+        src/transport/webrtc/webrtc_zmq_signaler.cpp
+        src/transport/webrtc/webrtc_http_signaler.cpp
         src/transport/webrtc/webrtc_stream_writer.cpp
         src/transport/webrtc/webrtc_stream_reader.cpp
         src/transport/webrtc/webrtc_rpc_requester.cpp
@@ -277,11 +277,17 @@ if(MAGPIE_WITH_WEBRTC)
     target_link_libraries(magpie_webrtc
         PUBLIC
             magpie_core
-            magpie_mqtt
         PRIVATE
             ${MAGPIE_LIBDATACHANNEL_TARGET}
             ${TURBOJPEG_LIBRARY}
+            CURL::libcurl
+            zmq
     )
+
+    if(MAGPIE_WITH_MQTT)
+        target_sources(magpie_webrtc PRIVATE src/transport/webrtc/webrtc_mqtt_signaler.cpp)
+        target_link_libraries(magpie_webrtc PUBLIC magpie_mqtt)
+    endif()
 
     target_compile_definitions(magpie_webrtc PUBLIC MAGPIE_WITH_WEBRTC)
     target_compile_features(magpie_webrtc PUBLIC cxx_std_17)
@@ -502,6 +508,9 @@ set(CPACK_DEBIAN_VIDEO_PACKAGE_DEPENDS     "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_DISCOVERY_PACKAGE_DEPENDS "libmagpie (>= ${PROJECT_VERSION})")
 set(CPACK_DEBIAN_WEBRTC_PACKAGE_SHLIBDEPS  OFF)
 # libdatachannel is statically linked into this package, so no runtime dep on it.
-set(CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS    "libmagpie (>= ${PROJECT_VERSION}), libmagpie-mqtt (>= ${PROJECT_VERSION}), libturbojpeg0 (>= 1.0)")
+set(CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS    "libmagpie (>= ${PROJECT_VERSION}), libturbojpeg0 (>= 1.0), libcurl4 | libcurl4t64")
+if(MAGPIE_WITH_MQTT)
+    string(APPEND CPACK_DEBIAN_WEBRTC_PACKAGE_DEPENDS ", libmagpie-mqtt (>= ${PROJECT_VERSION})")
+endif()
 
 include(CPack)

@@ -7,21 +7,25 @@
 #include <string>
 
 #include <magpie/serializer/value.hpp>
-#include <magpie/transport/mqtt_connection.hpp>
 #include <magpie/transport/webrtc_options.hpp>
+#include <magpie/transport/webrtc_signaler.hpp>
+#ifdef MAGPIE_WITH_MQTT
+#include <magpie/transport/mqtt_connection.hpp>
+#endif
 
 namespace magpie {
+
+class MqttConnection;
 
 /**
  * WebRtcConnection
  *
- * Manages a WebRTC peer connection using MQTT as the signaling transport.
+ * Manages a WebRTC peer connection with a pluggable signaling transport.
  * Multiple WebRtcStreamWriter, WebRtcStreamReader, WebRtcRpcRequester, and
  * WebRtcRpcResponder instances can share one WebRtcConnection — mirroring
  * the MqttConnection pattern.
  *
- * Signaling runs over a dedicated MQTT topic:
- *   magpie/webrtc/<sessionId>/signal
+ * Signaling uses opaque MessagePack bytes; the signaler chooses the transport.
  *
  * Role (offerer vs answerer) is auto-negotiated: both peers broadcast "hello"
  * messages; the peer with the lexicographically higher peerId creates the offer.
@@ -33,10 +37,9 @@ namespace magpie {
  *   rpc_rep: { "type":"rpc_rep", "rid":"...", "payload":<value> }
  *
  * @code
- * auto sig = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
- * sig->connect();
+ * auto sig = std::make_shared<HttpSignaler>("https://host/signal", "my-robot");
  *
- * auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot");
+ * auto conn = std::make_shared<WebRtcConnection>(sig);
  * if (!conn->connect(30.0)) {
  *     std::cerr << "peer not found\n";
  * }
@@ -73,13 +76,18 @@ public:
     /**
      * Construct a WebRtcConnection.
      *
-     * @param signalConn  Shared, already-connected MqttConnection used only for signaling.
-     * @param sessionId   Session identifier — must match the remote peer exactly.
+     * @param signaler    Signaling transport for the shared session.
      * @param options     WebRTC configuration (ICE servers, reconnect, data channel settings).
      */
+    explicit WebRtcConnection(std::shared_ptr<WebRtcSignaler> signaler,
+                              WebRtcOptions options = WebRtcOptions{});
+
+#ifdef MAGPIE_WITH_MQTT
+    /** Existing MQTT constructor, retained when MQTT support is enabled. */
     explicit WebRtcConnection(std::shared_ptr<MqttConnection> signalConn,
-                               const std::string&              sessionId,
-                               WebRtcOptions                   options = WebRtcOptions{});
+                              const std::string& sessionId,
+                              WebRtcOptions options = WebRtcOptions{});
+#endif
 
     ~WebRtcConnection();
 

@@ -52,7 +52,7 @@ Whether the wire is ZeroMQ, MQTT, WebRTC, or something entirely custom, the appl
 - **Schema-based RPC** — JSON-RPC 2.0 dispatch via `JsonRpcSchema`; define your API once, call methods by name (`client.call("add", {{"a", 3}, {"b", 4}})`)
 - **MCP server support** — `McpSchema` turns any MAGPIE C++ RPC responder into a fully compliant MCP tool server (`initialize`, `tools/list`, `tools/call`); any FastMCP `Client` using the Python `McpTransport` can call those tools over ZMQ, MQTT, or WebRTC
 - **MQTT transport** — full streaming and RPC over MQTT; shared connection; supports `mqtt://`, `mqtts://`, `ws://`, `wss://`, TLS, auth, LWT, and auto-reconnect
-- **WebRTC transport** — P2P streaming and RPC over WebRTC; MQTT used only for the initial signaling handshake; all payload traffic flows peer-to-peer; STUN + optional TURN for NAT traversal
+- **WebRTC transport** — P2P streaming and RPC over WebRTC; choose HTTP, ZeroMQ, or optional MQTT signaling; all payload traffic flows peer-to-peer; STUN + optional TURN for NAT traversal
 - **Typed frames** — `ImageFrameJpeg`, `ImageFrameRaw`, `AudioFrameRaw`, `AudioFrameFlac`, and more; automatic serialization/deserialization across all transports
 - **Node helpers** — `BaseNode`, `SourceNode`, `SinkNode`, `ProcessNode`, `ServerNode` add lifecycle and thread management on top of the raw transport primitives
 - **Network discovery** — mDNS/Zeroconf node advertisement and scanning via `ZconfDiscovery`
@@ -75,6 +75,7 @@ Pre-built Debian packages are available from the [Releases](https://github.com/l
 | `libmagpie-audio` | Audio frames (`AudioFrameRaw`, `AudioFrameFlac`) |
 | `libmagpie-mqtt` | MQTT transport |
 | `libmagpie-video` | Image frames (`ImageFrameRaw`, `ImageFrameJpeg`) |
+| `libmagpie-webrtc` | WebRTC with HTTP and ZeroMQ signaling; MQTT signaling when enabled |
 
 ```bash
 # Ubuntu 24.04 amd64
@@ -102,7 +103,7 @@ cd magpie-cpp
 | Audio frames | `libflac-dev` | `-DMAGPIE_WITH_AUDIO=ON` |
 | MQTT transport | `libpaho-mqtt-dev libpaho-mqttpp-dev` | `-DMAGPIE_WITH_MQTT=ON` |
 | Video frames | `libturbojpeg0-dev` | `-DMAGPIE_WITH_VIDEO=ON` |
-| WebRTC transport | `libdatachannel-dev` + MQTT | `-DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON` |
+| WebRTC transport | `libdatachannel-dev libcurl4-openssl-dev libturbojpeg0-dev` | `-DMAGPIE_WITH_WEBRTC=ON` |
 
 ```bash
 # Core only
@@ -113,9 +114,12 @@ cmake -S . -B build && cmake --build build
 sudo apt install libpaho-mqtt-dev libpaho-mqttpp-dev
 cmake -S . -B build -DMAGPIE_WITH_MQTT=ON && cmake --build build
 
-# With WebRTC (requires MQTT)
-sudo apt install libdatachannel-dev
-cmake -S . -B build -DMAGPIE_WITH_MQTT=ON -DMAGPIE_WITH_WEBRTC=ON && cmake --build build
+# With WebRTC (HTTP and ZeroMQ signaling)
+sudo apt install libdatachannel-dev libcurl4-openssl-dev libturbojpeg0-dev
+cmake -S . -B build -DMAGPIE_WITH_WEBRTC=ON && cmake --build build
+
+# Also enable MQTT signaling and the existing MQTT WebRTC examples
+cmake -S . -B build -DMAGPIE_WITH_WEBRTC=ON -DMAGPIE_WITH_MQTT=ON && cmake --build build
 ```
 
 > Network discovery (mDNS/Zeroconf) is always included in the core library — no extra flag or dependency needed.
@@ -372,9 +376,39 @@ conn->connect();
 
 ### WebRTC Streaming
 
-WebRTC enables **P2P communication over the internet** — no broker in the data path after the initial signaling handshake. Signaling is exchanged via MQTT (internet) or ZMQ (LAN).
+WebRTC enables **P2P communication over the internet** — no broker in the data path after the initial signaling handshake. `WebRtcConnection` accepts a `WebRtcSignaler`: `HttpSignaler` uses the same HTTP relay protocol as MAGPIE Python and JS, `ZmqSignaler` uses a two-peer ZeroMQ PAIR socket, and `MqttSignaler` is available with `MAGPIE_WITH_MQTT=ON`.
 
-> **Note:** The C++ implementation uses [libdatachannel](https://github.com/paullouisageneau/libdatachannel), which provides data channels only — there is no RTP/SRTP media track stack. All frames (including video and audio) are transported over WebRTC data channels. When interoperating with a Python peer that has `use_media_channels=True`, set `useMediaChannels=false` on the C++ side so both peers agree to use the data-channel path.
+> **Note:** MAGPIE C++ currently transports video and audio over WebRTC data channels; RTP media tracks are a separate future change. When interoperating with a Python peer that has `use_media_channels=True`, set `useMediaChannels=false` on the C++ side so both peers agree to use the data-channel path.
+
+Choose a signaler before constructing the connection:
+
+```cpp
+#include <magpie/transport/webrtc_http_signaler.hpp>
+#include <magpie/transport/webrtc_zmq_signaler.hpp>
+#include <magpie/transport/webrtc_connection.hpp>
+#include <memory>
+
+auto http = std::make_shared<magpie::HttpSignaler>(
+    "http://127.0.0.1:8000/signal", "my-robot");
+auto conn = std::make_shared<magpie::WebRtcConnection>(http);
+
+// Or, for a direct two-peer setup, one peer binds and the other connects:
+auto zmq = std::make_shared<magpie::ZmqSignaler>(
+    "tcp://127.0.0.1:5555", "my-robot", /*bind=*/true);
+```
+
+For authenticated HTTP relays, set `HttpSignalerOptions::headers` or `headersProvider` before construction:
+
+```cpp
+magpie::HttpSignalerOptions options;
+options.headers["Authorization"] = "Bearer TOKEN";
+auto http = std::make_shared<magpie::HttpSignaler>(
+    "https://host/signal", "my-robot", options);
+```
+
+The provider is called for each request and can refresh tokens. `proxy` and `caBundle` are also available. The relay protocol and Python server example are documented in [the HTTP signaling guide](https://github.com/luxai-qtrobot/magpie/blob/main/docs/webrtc-http-signaling.md).
+
+The four `example_webrtc_*` programs accept a signaling address as their first argument. For HTTP, run the existing Python or Node relay, then start the reader and writer with `http://127.0.0.1:8000/signal`. For ZeroMQ, pass the same `tcp://host:port` to both programs and add `--bind` to one of them. When MQTT is enabled, `mqtt://broker:1883` is also accepted. The stream examples use session `magpie-cpp-demo`; the RPC examples use `magpie-cpp-rpc-demo`.
 
 **Writer:**
 

@@ -1,19 +1,19 @@
 //
 // webrtc_rpc_requester.cpp
 //
-// Performs RPC calls over a WebRTC data channel (signaling over MQTT).
+// Performs RPC calls over a WebRTC data channel.
 // Sends a Value dict request to the "magpie/echo" service and prints
 // the response received from example_webrtc_rpc_responder.
 //
-// Build:  cmake -DMAGPIE_WITH_WEBRTC=ON -DMAGPIE_WITH_MQTT=ON ..
-// Run:    ./example_webrtc_rpc_requester
+// Build:  cmake -DMAGPIE_WITH_WEBRTC=ON ..
+// Run:    ./example_webrtc_rpc_requester http://127.0.0.1:8000/signal
 //
 // Pair with: example_webrtc_rpc_responder
-// Both sides must use the same broker URL and session_id.
+// Both sides must use the same signaling address and session ID.
 //
 
 #include <magpie/serializer/value.hpp>
-#include <magpie/transport/mqtt_connection.hpp>
+#include "example_signaling.hpp"
 #include <magpie/transport/webrtc_connection.hpp>
 #include <magpie/transport/webrtc_rpc_requester.hpp>
 #include <magpie/transport/timeout_error.hpp>
@@ -23,26 +23,25 @@
 #include <memory>
 #include <thread>
 
-int main() {
+int main(int argc, char** argv) {
     using namespace magpie;
 
     Logger::setLevel("DEBUG");
 
     // ------------------------------------------------------------------
-    // 1. Connect MQTT for signaling
+    // 1. Select signaling transport
     // ------------------------------------------------------------------
-    auto signalConn = std::make_shared<MqttConnection>("mqtt://broker.hivemq.com:1883");
-    signalConn->connect(10.0);
+    const std::string address = argc > 1 ? argv[1] : "http://127.0.0.1:8000/signal";
+    auto signaler = exampleSignaler(address, "magpie-cpp-rpc-demo", argc > 2 && std::string(argv[2]) == "--bind");
 
     // ------------------------------------------------------------------
     // 2. Create WebRTC connection and wait for peer
     // ------------------------------------------------------------------
-    auto conn = std::make_shared<WebRtcConnection>(signalConn, "magpie-cpp-rpc-demo");
+    auto conn = std::make_shared<WebRtcConnection>(signaler);
 
     Logger::info("Waiting for peer (session: magpie-cpp-rpc-demo) ...");
     if (!conn->connect(30.0)) {
         Logger::error("No peer found within 30s — is the responder running?");
-        signalConn->disconnect();
         return 1;
     }
     Logger::info("Connected! Calling service 'magpie/echo'.");
@@ -85,6 +84,5 @@ int main() {
 
     req.close();
     conn->disconnect();
-    signalConn->disconnect();
     return 0;
 }
