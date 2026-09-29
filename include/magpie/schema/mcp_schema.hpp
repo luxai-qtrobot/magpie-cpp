@@ -26,7 +26,7 @@ namespace magpie {
  *
  *   MqttRpcResponder server(conn, "qtrobot", nullptr, {}, -1, schema);
  *   while (true) {
- *       try { server.handleOnce(1.0); } catch (const TimeoutError&) {}
+ *       try { server.respond(1.0); } catch (const TimeoutError&) {}
  *   }
  * @endcode
  *

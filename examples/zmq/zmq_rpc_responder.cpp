@@ -21,7 +21,7 @@ int main() {
 
     while (true) {
         try {
-            bool ok = server.handleOnce(onRequest, /*timeoutSec=*/3.0);   
+            bool ok = server.respond(onRequest, /*timeoutSec=*/3.0);
             if (!ok) {
                 Logger::info("responder: no request received.");
                 continue;

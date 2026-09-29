@@ -49,7 +49,7 @@ private:
  *
  *   ZmqRpcResponder server("tcp://*:5556", nullptr, true, schema);
  *   while (true) {
- *       try { server.handleOnce(1.0); } catch (const TimeoutError&) {}
+ *       try { server.respond(1.0); } catch (const TimeoutError&) {}
  *   }
  * @endcode
  *

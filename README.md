@@ -9,6 +9,9 @@
   <a href="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml">
     <img src="https://github.com/luxai-qtrobot/magpie-cpp/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"/>
   </a>
+  <a href="https://luxai-qtrobot.github.io/magpie-doc/">
+    <img src="https://img.shields.io/badge/docs-MAGPIE-118e78" alt="MAGPIE documentation"/>
+  </a>
   <a href="https://github.com/luxai-qtrobot/magpie-cpp/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/luxai-qtrobot/magpie-cpp" alt="License"/>
   </a>
@@ -191,7 +194,7 @@ int main() {
     ZmqRpcResponder server("tcp://*:5556");
     while (true) {
         try {
-            server.handleOnce([](const Value& req) -> Value {
+            server.respond([](const Value& req) -> Value {
                 Logger::info("request: " + req.toDebugString());
                 return req;  // echo
             }, /*timeoutSec=*/1.0);
@@ -202,6 +205,8 @@ int main() {
     }
 }
 ```
+
+`respond()` processes one request and returns `false` on timeout. The existing `handleOnce()` name remains available.
 
 **Requester:**
 
@@ -302,7 +307,7 @@ int main() {
 
     MqttRpcResponder server(conn, "myservice/actions");
     while (true) {
-        server.handleOnce([](const Value& req) -> Value {
+        server.respond([](const Value& req) -> Value {
             return Value::fromString("ok");
         }, /*timeoutSec=*/1.0);
     }
@@ -492,7 +497,7 @@ int main() {
 
     WebRtcRpcResponder server(conn, "service/actions");
     while (true) {
-        server.handleOnce([](const Value& req) -> Value {
+        server.respond([](const Value& req) -> Value {
             return Value::fromString("ok");
         }, /*timeoutSec=*/1.0);
     }
@@ -592,7 +597,7 @@ int main() {
 
     ZmqRpcResponder server("tcp://*:5556", nullptr, true, schema);
     while (true)
-        server.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+        server.respond(/*timeoutSec=*/1.0);
 }
 ```
 
@@ -709,7 +714,7 @@ int main() {
     // ZMQ — no broker needed
     ZmqRpcResponder server("tcp://*:5556", nullptr, true, schema);
     while (true)
-        server.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+        server.respond(/*timeoutSec=*/1.0);
 }
 ```
 
@@ -731,7 +736,7 @@ Serve loop is the same for all:
 
 ```cpp
 while (true)
-    server.handleOnce(nullptr, 1.0);
+    server.respond(1.0);
 ```
 
 #### Agent / cloud side — call tools with FastMCP Client

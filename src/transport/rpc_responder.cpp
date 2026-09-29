@@ -7,6 +7,10 @@ RpcResponder::RpcResponder(const std::string& name, std::shared_ptr<BaseSchema> 
     : name_{name}, schema_{std::move(schema)} {
 }
 
+bool RpcResponder::respond(const RpcHandler& handler, double timeoutSec) {
+    return handleOnce(handler, timeoutSec);
+}
+
 bool RpcResponder::handleOnce(const RpcHandler& handler, double timeoutSec) {
     if (closed_)
         throw std::runtime_error(name_ + " is closed");

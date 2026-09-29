@@ -70,7 +70,7 @@ int main() {
 
     while (true) {
         try {
-            server.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+            server.respond(/*timeoutSec=*/1.0);
         } catch (const std::exception& e) {
             Logger::error(std::string("error: ") + e.what());
             break;

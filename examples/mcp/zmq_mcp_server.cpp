@@ -83,7 +83,7 @@ int main() {
 
     while (true) {
         try {
-            responder.handleOnce(/*handler=*/nullptr, /*timeoutSec=*/1.0);
+            responder.respond(/*timeoutSec=*/1.0);
         } catch (const std::exception& e) {
             Logger::error(std::string("error: ") + e.what());
             break;

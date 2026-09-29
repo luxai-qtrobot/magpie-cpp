@@ -37,7 +37,7 @@ namespace magpie {
  * conn->connect();
  *
  * MqttRpcResponder rsp(conn, "robot/motion");
- * rsp.handleOnce([](const Value& req) { return Value::fromString("ok"); }, 10.0);
+ * rsp.respond([](const Value& req) { return Value::fromString("ok"); }, 10.0);
  *
  * rsp.close();
  * conn->disconnect();

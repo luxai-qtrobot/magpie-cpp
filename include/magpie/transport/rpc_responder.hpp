@@ -30,7 +30,7 @@ public:
     RpcResponder& operator=(const RpcResponder&) = delete;
 
     /**
-     * Handles a single incoming request.
+     * Waits for one incoming request and sends its response.
      *
      * When a schema is set on this responder, handler is optional — the schema
      * dispatches the request automatically. When no schema is set, handler is required.
@@ -42,9 +42,14 @@ public:
      * @return True if a request was handled; False if it timed out.
      *
      * @throws std::runtime_error if already closed or no handler/schema is set.
-     * @throws TimeoutError       if transportRecv throws TimeoutError.
      * @throws std::exception     for transport-level or handler errors.
      */
+    bool respond(const RpcHandler& handler = nullptr, double timeoutSec = -1.0);
+
+    /** Convenience form for schema-based responders with no handler argument. */
+    bool respond(double timeoutSec) { return respond(nullptr, timeoutSec); }
+
+    /** Backward-compatible name for respond(). */
     bool handleOnce(const RpcHandler& handler = nullptr, double timeoutSec = -1.0);
 
     /**

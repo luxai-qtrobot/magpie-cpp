@@ -55,7 +55,7 @@ int main() {
 
     while (true) {
         try {
-            rsp.handleOnce(handler, /*timeoutSec=*/5.0);
+            rsp.respond(handler, /*timeoutSec=*/5.0);
         } catch (const TimeoutError&) {
             Logger::debug("Responder: waiting for requests...");
         } catch (const std::exception& e) {
