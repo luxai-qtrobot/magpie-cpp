@@ -2,14 +2,17 @@
 
 #include <zmq.h>
 
+#include <algorithm>
 #include <chrono>
 #include <stdexcept>
 #include <utility>
 
 namespace magpie {
 
-ZmqSignaler::ZmqSignaler(std::string endpoint, std::string sessionId, bool bind)
-    : endpoint_(std::move(endpoint)), sessionId_(std::move(sessionId)), bind_(bind) {
+ZmqSignaler::ZmqSignaler(std::string endpoint, std::string sessionId,
+                         bool bind, bool multiplex)
+    : endpoint_(std::move(endpoint)), sessionId_(std::move(sessionId)),
+      bind_(bind), multiplex_(multiplex) {
     if (endpoint_.empty() || sessionId_.empty())
         throw std::invalid_argument("ZmqSignaler: endpoint and session ID are required");
     std::promise<void> ready;
@@ -51,7 +54,8 @@ void ZmqSignaler::run(std::promise<void> ready) {
         ready.set_exception(std::make_exception_ptr(std::runtime_error("zmq_ctx_new failed")));
         return;
     }
-    void* socket = zmq_socket(context, ZMQ_PAIR);
+    void* socket = zmq_socket(context,
+        multiplex_ ? (bind_ ? ZMQ_ROUTER : ZMQ_DEALER) : ZMQ_PAIR);
     if (!socket) {
         ready.set_exception(std::make_exception_ptr(std::runtime_error("zmq_socket failed")));
         zmq_ctx_term(context);
@@ -69,6 +73,8 @@ void ZmqSignaler::run(std::promise<void> ready) {
     }
     ready.set_value();
 
+    std::vector<std::vector<std::uint8_t>> identities;
+
     while (!stopped_) {
         bool pending;
         {
@@ -81,6 +87,30 @@ void ZmqSignaler::run(std::promise<void> ready) {
             zmq_msg_t msg;
             zmq_msg_init(&msg);
             if (zmq_msg_recv(&msg, socket, ZMQ_DONTWAIT) >= 0) {
+                std::vector<std::uint8_t> identity;
+                if (multiplex_ && bind_) {
+                    if (!zmq_msg_more(&msg)) {
+                        zmq_msg_close(&msg);
+                        continue;
+                    }
+                    const auto* first = static_cast<const std::uint8_t*>(zmq_msg_data(&msg));
+                    identity.assign(first, first + zmq_msg_size(&msg));
+                    if (std::find(identities.begin(), identities.end(), identity) == identities.end())
+                        identities.push_back(identity);
+                    zmq_msg_close(&msg);
+                    zmq_msg_init(&msg);
+                    if (zmq_msg_recv(&msg, socket, ZMQ_DONTWAIT) < 0) {
+                        zmq_msg_close(&msg);
+                        continue;
+                    }
+                    const auto* data = static_cast<const std::uint8_t*>(zmq_msg_data(&msg));
+                    const auto size = zmq_msg_size(&msg);
+                    for (const auto& other : identities) {
+                        if (other == identity) continue;
+                        if (zmq_send(socket, other.data(), other.size(), ZMQ_SNDMORE | ZMQ_DONTWAIT) >= 0)
+                            zmq_send(socket, data, size, ZMQ_DONTWAIT);
+                    }
+                }
                 MessageCallback callback;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -97,8 +127,15 @@ void ZmqSignaler::run(std::promise<void> ready) {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!outgoing_.empty()) {
                 const auto& bytes = outgoing_.front();
-                if (zmq_send(socket, bytes.data(), bytes.size(), ZMQ_DONTWAIT) >= 0)
+                if (multiplex_ && bind_) {
+                    for (const auto& identity : identities) {
+                        if (zmq_send(socket, identity.data(), identity.size(), ZMQ_SNDMORE | ZMQ_DONTWAIT) >= 0)
+                            zmq_send(socket, bytes.data(), bytes.size(), ZMQ_DONTWAIT);
+                    }
                     outgoing_.pop_front();
+                } else if (zmq_send(socket, bytes.data(), bytes.size(), ZMQ_DONTWAIT) >= 0) {
+                    outgoing_.pop_front();
+                }
             }
         }
     }

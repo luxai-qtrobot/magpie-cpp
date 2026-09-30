@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <magpie/serializer/value.hpp>
 #include <magpie/transport/webrtc_options.hpp>
@@ -20,15 +21,15 @@ class MqttConnection;
 /**
  * WebRtcConnection
  *
- * Manages a WebRTC peer connection with a pluggable signaling transport.
+ * Manages one WebRTC peer connection per remote participant through a shared
+ * signaling transport.
  * Multiple WebRtcStreamWriter, WebRtcStreamReader, WebRtcRpcRequester, and
  * WebRtcRpcResponder instances can share one WebRtcConnection — mirroring
  * the MqttConnection pattern.
  *
  * Signaling uses opaque MessagePack bytes; the signaler chooses the transport.
  *
- * Role (offerer vs answerer) is auto-negotiated: both peers broadcast "hello"
- * messages; the peer with the lexicographically higher peerId creates the offer.
+ * SDP role (offerer vs answerer) is negotiated independently for each peer.
  *
  * Data channel wire format (msgpack-encoded dicts, identical to Python/JS):
  *   pub:     { "type":"pub",     "topic":"...", "payload":<value> }
@@ -117,6 +118,9 @@ public:
     /** @return the session ID shared with the remote peer. */
     const std::string& sessionId() const;
 
+    /** @return IDs of remote peers whose data channels are open. */
+    std::vector<std::string> peerIds() const;
+
     /**
      * @return true if the "magpie-media" unreliable channel is used for
      *         video/audio (the default), false if the reliable "magpie"
@@ -176,6 +180,15 @@ public:
     void sendMediaFrame(const Value& msg);
 
 private:
+    struct Group;
+    std::shared_ptr<Group> group_;
+
+    // Private one-to-one link owned by the public multi-peer connection.
+    WebRtcConnection(std::shared_ptr<WebRtcSignaler> signaler,
+                     WebRtcOptions options,
+                     const std::string& localPeerId);
+    void startPeer();
+
     // PIMPL — keeps libdatachannel headers out of this public header.
     // shared_ptr (not unique_ptr) so that lambdas inside Impl can hold
     // weak_ptr<Impl> safely across the connection lifetime.

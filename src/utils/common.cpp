@@ -17,8 +17,8 @@ std::string getUniqueId() {
     static const char alphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     static const std::size_t alphabetSize = sizeof(alphabet) - 1;
 
-    static std::mt19937_64 rng{std::random_device{}()};
-    static std::uniform_int_distribution<std::size_t> dist(0, alphabetSize - 1);
+    thread_local std::mt19937_64 rng{std::random_device{}()};
+    thread_local std::uniform_int_distribution<std::size_t> dist(0, alphabetSize - 1);
 
     std::string result;
     result.reserve(26);

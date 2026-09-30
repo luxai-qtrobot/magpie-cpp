@@ -41,6 +41,7 @@ struct Response {
     long status{0};
     std::vector<std::uint8_t> body;
     std::string sequence;
+    bool joinAnnouncements{false};
 };
 
 size_t receiveBody(char* ptr, size_t size, size_t count, void* user) {
@@ -66,6 +67,19 @@ size_t receiveHeader(char* ptr, size_t size, size_t count, void* user) {
             static_cast<Response*>(user)->sequence = value.substr(first, last - first + 1);
         }
     }
+    constexpr char joinKey[] = "X-Magpie-Join-Announcements:";
+    if (line.size() >= sizeof(joinKey) - 1 &&
+        std::equal(line.begin(), line.begin() + sizeof(joinKey) - 1, joinKey,
+                   [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) ==
+                                                std::tolower(static_cast<unsigned char>(b)); })) {
+        const auto value = line.substr(sizeof(joinKey) - 1);
+        const auto first = value.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            const auto last = value.find_last_not_of(" \t\r\n");
+            static_cast<Response*>(user)->joinAnnouncements =
+                value.substr(first, last - first + 1) == "1";
+        }
+    }
     return length;
 }
 
@@ -87,6 +101,9 @@ struct HttpSignaler::Impl {
     std::atomic<bool> stopped{false};
     bool closed{false};
     bool started{false};
+    std::atomic<bool> registered{false};
+    std::atomic<bool> joinAnnouncements{false};
+    std::vector<std::uint8_t> announcement;
     std::mutex mutex;
     std::mutex registerMutex;
     std::condition_variable wake;
@@ -159,9 +176,11 @@ struct HttpSignaler::Impl {
 
     void registerPeer() {
         std::lock_guard<std::mutex> lock(registerMutex);
-        auto response = request("PUT", peerUrl);
-        if (response.status == 409) throw std::runtime_error("HttpSignaler: session is full (409)");
+        auto response = request("PUT", peerUrl, &announcement);
+        if (response.status == 409) throw std::runtime_error("HttpSignaler: participant rejected (409)");
         if (response.status != 204) throw std::runtime_error("HttpSignaler: registration failed (HTTP " + std::to_string(response.status) + ")");
+        joinAnnouncements.store(response.joinAnnouncements);
+        registered.store(true);
     }
 
     void sendLoop() {
@@ -226,6 +245,20 @@ HttpSignaler::HttpSignaler(std::string baseUrl, std::string sessionId, HttpSigna
 HttpSignaler::~HttpSignaler() { disconnect(); }
 const std::string& HttpSignaler::sessionId() const noexcept { return impl_->sessionId; }
 
+bool HttpSignaler::announce(const std::vector<std::uint8_t>& payload) {
+    {
+        std::lock_guard<std::mutex> lock(impl_->registerMutex);
+        if (impl_->stopped.load()) throw std::runtime_error("HttpSignaler: disconnected");
+        impl_->announcement = payload;
+    }
+    impl_->registerPeer();
+    return impl_->joinAnnouncements.load();
+}
+
+bool HttpSignaler::supportsJoinAnnouncements() const noexcept {
+    return impl_->joinAnnouncements.load();
+}
+
 void HttpSignaler::publish(const std::uint8_t* data, std::size_t size) {
     if (!data && size) throw std::invalid_argument("HttpSignaler: null payload");
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -243,7 +276,7 @@ void HttpSignaler::subscribe(MessageCallback callback) {
         if (impl_->closed) throw std::runtime_error("HttpSignaler: disconnected");
         if (impl_->started) { impl_->callback = std::move(callback); return; }
     }
-    impl_->registerPeer();
+    if (!impl_->registered.load()) impl_->registerPeer();
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->callback = std::move(callback);
@@ -270,7 +303,7 @@ void HttpSignaler::disconnect() {
     impl_->wake.notify_all();
     if (impl_->sender.joinable()) impl_->sender.join();
     if (impl_->poller.joinable()) impl_->poller.join();
-    if (impl_->started) {
+    if (impl_->registered.load()) {
         impl_->stopped = false; // permit the final best-effort DELETE request
         try { impl_->request("DELETE", impl_->peerUrl); } catch (...) {}
     }

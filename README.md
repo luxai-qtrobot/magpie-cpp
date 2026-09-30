@@ -381,7 +381,9 @@ conn->connect();
 
 ### WebRTC Streaming
 
-WebRTC enables **P2P communication over the internet** — no broker in the data path after the initial signaling handshake. `WebRtcConnection` accepts a `WebRtcSignaler`: `HttpSignaler` uses the same HTTP relay protocol as MAGPIE Python and JS, `ZmqSignaler` uses a two-peer ZeroMQ PAIR socket, and `MqttSignaler` is available with `MAGPIE_WITH_MQTT=ON`.
+WebRTC enables **P2P communication over the internet** — no broker in the data path after the initial signaling handshake. One `WebRtcConnection` manages a separate WebRTC link to each remote peer. `connect()` returns when the first link is ready; `peerIds()` lists connected remotes as others join. Stream writers publish to every connected peer, and RPC replies return to the originating peer. `HttpSignaler` uses the same HTTP relay protocol as MAGPIE Python and JS, including cached hello announcements at join and a periodic-hello fallback for older relays. Long-poll GETs maintain the relay lease, and `reconnect=true` restarts a failed peer link without replacing healthy links. `ZmqSignaler` offers legacy PAIR and multi-client ROUTER/DEALER modes, and `MqttSignaler` is available with `MAGPIE_WITH_MQTT=ON`.
+
+For a service with multiple callers or viewers, set `WebRtcOptions::role` to `"host"` on the service and `"client"` on each client. This avoids client-to-client WebRTC links. The default `"mesh"` connects all participants.
 
 > **Note:** MAGPIE C++ currently transports video and audio over WebRTC data channels; RTP media tracks are a separate future change. When interoperating with a Python peer that has `use_media_channels=True`, set `useMediaChannels=false` on the C++ side so both peers agree to use the data-channel path.
 
@@ -400,6 +402,13 @@ auto conn = std::make_shared<magpie::WebRtcConnection>(http);
 // Or, for a direct two-peer setup, one peer binds and the other connects:
 auto zmq = std::make_shared<magpie::ZmqSignaler>(
     "tcp://127.0.0.1:5555", "my-robot", /*bind=*/true);
+
+// For multiple clients, use ROUTER/DEALER on every participant:
+auto multiZmq = std::make_shared<magpie::ZmqSignaler>(
+    "tcp://127.0.0.1:5556", "my-robot", /*bind=*/true, /*multiplex=*/true);
+magpie::WebRtcOptions multiOptions;
+multiOptions.role = "host"; // connecting participants use "client"
+auto multiConn = std::make_shared<magpie::WebRtcConnection>(multiZmq, multiOptions);
 ```
 
 For authenticated HTTP relays, set `HttpSignalerOptions::headers` or `headersProvider` before construction:
@@ -551,6 +560,7 @@ opts.iceServers = {};                                                // disable 
 opts.iceServers.push_back({"turn:myturn.server:3478", "u", "p"});  // add TURN relay
 opts.iceTransportPolicy = "relay";   // force relay only
 opts.reconnect = true;               // auto-reconnect on disconnect
+opts.role = "host";                 // "client" on callers/viewers; default "mesh"
 opts.useMediaChannels = false;       // route all frames over the reliable data channel
 
 auto conn = std::make_shared<WebRtcConnection>(sig, "my-robot", opts);

@@ -1,14 +1,17 @@
 #include <magpie/transport/webrtc_connection.hpp>
 
 #include <magpie/serializer/msgpack_serializer.hpp>
+#include <magpie/transport/webrtc_http_signaler.hpp>
 #include <magpie/utils/common.hpp>
 #include <magpie/utils/logger.hpp>
 
 #include <rtc/rtc.hpp>
 
 #include <algorithm>
+#include <condition_variable>
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -29,6 +32,9 @@ struct WebRtcConnection::Impl {
     std::string                     peerId;
     WebRtcOptions                   options;
     std::shared_ptr<Serializer>     serializer;
+    std::string                     targetRemote;
+    std::string                     role{"mesh"};
+    std::function<void(bool)>       onStateChange;
 
 
     // ---- WebRTC objects ----
@@ -83,7 +89,11 @@ struct WebRtcConnection::Impl {
 
     void sendSignal(const Value::Dict& msg) {
         try {
-            auto bytes = serializer->serialize(Value::fromDict(msg));
+            auto addressed = msg;
+            if (!targetRemote.empty())
+                addressed["to_peer_id"] = Value::fromString(targetRemote);
+            addressed["role"] = Value::fromString(role);
+            auto bytes = serializer->serialize(Value::fromDict(addressed));
             signaler->publish(bytes.data(), bytes.size());
         } catch (const std::exception& e) {
             Logger::warning("WebRtcConnection: signal send error: " + std::string(e.what()));
@@ -135,6 +145,7 @@ struct WebRtcConnection::Impl {
                        state == rtc::PeerConnection::State::Closed) {
                 impl->connected.store(false);
                 impl->connCv.notify_all();
+                if (impl->onStateChange) impl->onStateChange(false);
 
                 if (impl->options.reconnect && !impl->disconnecting.load()) {
                     Logger::info("WebRtcConnection(" + impl->peerId +
@@ -186,12 +197,14 @@ struct WebRtcConnection::Impl {
             impl->connected.store(true);
             impl->helloStop.store(true);
             impl->connCv.notify_all();
+            if (impl->onStateChange) impl->onStateChange(true);
         });
 
         ch->onClosed([impl]() {
             Logger::debug("WebRtcConnection(" + impl->peerId + "): data channel closed.");
             impl->connected.store(false);
             impl->connCv.notify_all();
+            if (impl->onStateChange) impl->onStateChange(false);
 
             if (impl->options.reconnect && !impl->disconnecting.load()) {
                 impl->scheduleReconnect();
@@ -653,7 +666,7 @@ struct WebRtcConnection::Impl {
             }
 
             // New peer ID forces re-negotiation
-            peerId = getUniqueId().substr(0, 12);
+            peerId = getUniqueId().substr(0, 16);
             Logger::debug("WebRtcConnection: reconnecting with new peerId=" + peerId);
 
             // Restart hello loop (30 s timeout)
@@ -684,25 +697,327 @@ struct WebRtcConnection::Impl {
     }
 };
 
+namespace {
+
+class DirectedSignaler final : public WebRtcSignaler {
+public:
+    DirectedSignaler(std::shared_ptr<WebRtcSignaler> parent, std::string session)
+        : parent_(std::move(parent)), sessionId_(std::move(session)) {}
+
+    const std::string& sessionId() const noexcept override { return sessionId_; }
+    void publish(const std::uint8_t* data, std::size_t size) override {
+        parent_->publish(data, size);
+    }
+    void subscribe(MessageCallback callback) override {
+        std::deque<std::vector<std::uint8_t>> pending;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback_ = callback;
+            pending.swap(pending_);
+        }
+        for (const auto& payload : pending) callback(payload.data(), payload.size());
+    }
+    void unsubscribe() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback_ = {};
+    }
+    void disconnect() override { unsubscribe(); }
+    void deliver(const std::uint8_t* data, std::size_t size) {
+        MessageCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = callback_;
+            if (!callback) {
+                pending_.emplace_back(data, data + size);
+                return;
+            }
+        }
+        if (callback) callback(data, size);
+    }
+
+private:
+    std::shared_ptr<WebRtcSignaler> parent_;
+    std::string sessionId_;
+    std::mutex mutex_;
+    MessageCallback callback_;
+    std::deque<std::vector<std::uint8_t>> pending_;
+};
+
+} // namespace
+
+struct WebRtcConnection::Group : std::enable_shared_from_this<Group> {
+    std::shared_ptr<WebRtcSignaler> signaler;
+    std::shared_ptr<Serializer> serializer{std::make_shared<MsgpackSerializer>()};
+    WebRtcOptions options;
+    std::string sessionId;
+    std::string peerId{getUniqueId().substr(0, 16)};
+    mutable std::mutex mutex;
+    std::condition_variable cv;
+    std::unordered_map<std::string, std::shared_ptr<WebRtcConnection>> peers;
+    std::unordered_map<std::string, std::string> rpcOrigins;
+    std::unordered_map<std::string,
+        std::unordered_map<CallbackHandle, DataCallback>> pubCallbacks;
+    std::unordered_map<std::string,
+        std::unordered_map<CallbackHandle, RpcRequestCallback>> rpcReqCallbacks;
+    std::unordered_map<std::string, RpcReplyCallback> rpcRepCallbacks;
+    std::unordered_map<CallbackHandle, VideoCallback> videoCallbacks;
+    std::unordered_map<CallbackHandle, AudioCallback> audioCallbacks;
+    std::unordered_map<std::string, bool> everReadyPeers;
+    std::unordered_map<std::string, std::string> restartIds;
+    std::atomic<CallbackHandle> nextHandle{1};
+    std::thread discoveryThread;
+    bool started{false};
+    bool stopped{false};
+    bool everConnected{false};
+
+    Group(std::shared_ptr<WebRtcSignaler> source, WebRtcOptions config)
+        : signaler(std::move(source)), options(std::move(config)),
+          sessionId(signaler->sessionId()) {}
+
+    Value::Dict helloMessage() const {
+        Value::Dict hello;
+        hello["type"] = Value::fromString("hello");
+        hello["peer_id"] = Value::fromString(peerId);
+        hello["role"] = Value::fromString(options.role);
+        return hello;
+    }
+
+    void sendHello(const std::string& target = {}, const std::string& restartId = {}) {
+        auto hello = helloMessage();
+        if (!target.empty()) hello["to_peer_id"] = Value::fromString(target);
+        if (!restartId.empty()) hello["restart_id"] = Value::fromString(restartId);
+        try {
+            auto bytes = serializer->serialize(Value::fromDict(hello));
+            signaler->publish(bytes.data(), bytes.size());
+        } catch (const std::exception& e) {
+            Logger::warning("WebRtcConnection: discovery send failed: " +
+                            std::string(e.what()));
+        }
+    }
+
+    void registerCallbacks(const std::shared_ptr<WebRtcConnection>& child,
+                           const std::string& remote) {
+        auto state = child->impl_;
+        {
+            std::lock_guard<std::mutex> lock(state->pubMutex);
+            state->pubCallbacks = pubCallbacks;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->rpcReqMutex);
+            for (const auto& service : rpcReqCallbacks) {
+                for (const auto& entry : service.second) {
+                    auto weak = weak_from_this();
+                    state->rpcReqCallbacks[service.first][entry.first] =
+                        [weak, remote, callback=entry.second](const Value& message) {
+                            if (auto group = weak.lock()) {
+                                if (message.type() == Value::Type::Dict) {
+                                    const auto& fields = message.asDict();
+                                    auto rid = fields.find("rid");
+                                    if (rid != fields.end() && rid->second.type() == Value::Type::String) {
+                                        std::lock_guard<std::mutex> lock(group->mutex);
+                                        group->rpcOrigins[rid->second.asString()] = remote;
+                                    }
+                                }
+                            }
+                            callback(message);
+                        };
+                }
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->rpcRepMutex);
+            state->rpcRepCallbacks = rpcRepCallbacks;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->mediaMutex);
+            state->videoCallbacks = videoCallbacks;
+            state->audioCallbacks = audioCallbacks;
+        }
+    }
+
+    void onSignal(const std::uint8_t* data, std::size_t size) {
+        Value decoded;
+        try { decoded = serializer->deserialize(data, size); }
+        catch (const std::exception& e) {
+            Logger::warning("WebRtcConnection: signal decode failed: " + std::string(e.what()));
+            return;
+        }
+        if (decoded.type() != Value::Type::Dict) return;
+        const auto& fields = decoded.asDict();
+        auto from = fields.find("peer_id");
+        if (from == fields.end() || from->second.type() != Value::Type::String) return;
+        const std::string remote = from->second.asString();
+        if (remote.empty() || remote == peerId) return;
+        auto to = fields.find("to_peer_id");
+        if (to != fields.end() &&
+            (to->second.type() != Value::Type::String || to->second.asString() != peerId)) return;
+        auto roleField = fields.find("role");
+        std::string remoteRole = roleField != fields.end() &&
+            roleField->second.type() == Value::Type::String
+                ? roleField->second.asString() : "mesh";
+        if ((options.role == "client" && remoteRole == "client") ||
+            (options.role == "host" && remoteRole == "host")) return;
+
+        std::shared_ptr<WebRtcConnection> child;
+        std::shared_ptr<WebRtcConnection> oldChild;
+        bool created = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (stopped) return;
+            auto found = peers.find(remote);
+            auto typeField = fields.find("type");
+            const bool isHello = typeField != fields.end() &&
+                typeField->second.type() == Value::Type::String &&
+                typeField->second.asString() == "hello";
+            auto restartField = fields.find("restart_id");
+            const bool newRestart = isHello && restartField != fields.end() &&
+                restartField->second.type() == Value::Type::String &&
+                restartIds[remote] != restartField->second.asString();
+            if (newRestart) restartIds[remote] = restartField->second.asString();
+            if (found != peers.end() && isHello &&
+                (newRestart || (everReadyPeers.count(remote) && !found->second->isConnected()))) {
+                oldChild = found->second;
+                peers.erase(found);
+                everReadyPeers.erase(remote);
+                for (auto it = rpcOrigins.begin(); it != rpcOrigins.end();) {
+                    if (it->second == remote) it = rpcOrigins.erase(it);
+                    else ++it;
+                }
+                found = peers.end();
+            }
+            if (found == peers.end()) {
+                auto adapter = std::make_shared<DirectedSignaler>(signaler, sessionId);
+                auto childOptions = options;
+                childOptions.reconnect = false;
+                child.reset(new WebRtcConnection(adapter, childOptions, peerId));
+                child->impl_->targetRemote = remote;
+                child->impl_->role = options.role;
+                auto weak = weak_from_this();
+                child->impl_->onStateChange = [weak, remote](bool connected) {
+                    if (auto group = weak.lock()) {
+                        std::lock_guard<std::mutex> guard(group->mutex);
+                        if (connected) {
+                            group->everConnected = true;
+                            group->everReadyPeers[remote] = true;
+                        }
+                        group->cv.notify_all();
+                    }
+                };
+                registerCallbacks(child, remote);
+                peers.emplace(remote, child);
+                created = true;
+            } else {
+                child = found->second;
+            }
+        }
+        if (created) child->startPeer();
+        auto adapter = std::static_pointer_cast<DirectedSignaler>(child->impl_->signaler);
+        adapter->deliver(data, size);
+        if (oldChild) oldChild->disconnect();
+    }
+
+    void start() {
+        if (auto http = std::dynamic_pointer_cast<HttpSignaler>(signaler)) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (started || stopped) return;
+            }
+            auto bytes = serializer->serialize(Value::fromDict(helloMessage()));
+            http->announce(bytes);
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        if (started || stopped) return;
+        started = true;
+        auto weak = weak_from_this();
+        signaler->subscribe([weak](const std::uint8_t* bytes, std::size_t size) {
+            if (auto group = weak.lock()) group->onSignal(bytes, size);
+        });
+        discoveryThread = std::thread([weak]() {
+            while (auto group = weak.lock()) {
+                bool sendDiscovery = false;
+                {
+                    std::lock_guard<std::mutex> lock(group->mutex);
+                    if (group->stopped) break;
+                    auto http = std::dynamic_pointer_cast<HttpSignaler>(group->signaler);
+                    sendDiscovery = (!http || !http->supportsJoinAnnouncements()) &&
+                        (!group->everConnected || group->options.reconnect);
+                }
+                if (sendDiscovery) group->sendHello();
+                std::vector<std::pair<std::string, std::shared_ptr<WebRtcConnection>>> stale;
+                {
+                    std::unique_lock<std::mutex> lock(group->mutex);
+                    for (auto it = group->peers.begin(); it != group->peers.end();) {
+                        auto ready = group->everReadyPeers.find(it->first);
+                        if (ready != group->everReadyPeers.end() && !it->second->isConnected()) {
+                            stale.emplace_back(it->first, it->second);
+                            group->everReadyPeers.erase(ready);
+                            it = group->peers.erase(it);
+                        } else ++it;
+                    }
+                    group->cv.wait_for(lock, std::chrono::seconds(1),
+                                       [&]() { return group->stopped; });
+                }
+                for (auto& entry : stale) entry.second->disconnect();
+                auto http = std::dynamic_pointer_cast<HttpSignaler>(group->signaler);
+                if (http && http->supportsJoinAnnouncements() && group->options.reconnect) {
+                    for (const auto& entry : stale)
+                        group->sendHello(entry.first, getUniqueId());
+                }
+            }
+        });
+    }
+
+    void stop() {
+        std::vector<std::shared_ptr<WebRtcConnection>> children;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (stopped) return;
+            stopped = true;
+            cv.notify_all();
+        }
+        signaler->unsubscribe();
+        if (discoveryThread.joinable()) discoveryThread.join();
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            for (auto& entry : peers) children.push_back(entry.second);
+            peers.clear();
+            rpcOrigins.clear();
+            restartIds.clear();
+        }
+        for (auto& child : children) child->disconnect();
+        signaler->disconnect();
+    }
+};
+
 // ---------------------------------------------------------------------------
 // WebRtcConnection public API
 // ---------------------------------------------------------------------------
 
 WebRtcConnection::WebRtcConnection(std::shared_ptr<WebRtcSignaler> signaler,
                                     WebRtcOptions options)
-    : impl_(std::make_shared<Impl>())
 {
     if (!signaler) {
         throw std::invalid_argument("WebRtcConnection: signaler is null");
     }
-    impl_->sessionId   = signaler->sessionId();
-    if (impl_->sessionId.empty()) {
+    if (signaler->sessionId().empty()) {
         throw std::invalid_argument("WebRtcConnection: session ID is empty");
     }
+    if (options.role != "mesh" && options.role != "host" && options.role != "client") {
+        throw std::invalid_argument("WebRtcConnection: role must be mesh, host, or client");
+    }
+    group_ = std::make_shared<Group>(std::move(signaler), std::move(options));
+}
+
+WebRtcConnection::WebRtcConnection(std::shared_ptr<WebRtcSignaler> signaler,
+                                    WebRtcOptions options,
+                                    const std::string& localPeerId)
+    : impl_(std::make_shared<Impl>())
+{
+    impl_->sessionId   = signaler->sessionId();
     impl_->signaler    = std::move(signaler);
     impl_->options     = std::move(options);
     impl_->serializer  = std::make_shared<MsgpackSerializer>();
-    impl_->peerId      = getUniqueId().substr(0, 12);
+    impl_->peerId      = localPeerId;
 
     Logger::debug("WebRtcConnection: created, peerId=" + impl_->peerId +
                   ", sessionId=" + impl_->sessionId);
@@ -712,7 +1027,28 @@ WebRtcConnection::~WebRtcConnection() {
     try { disconnect(); } catch (...) {}
 }
 
+void WebRtcConnection::startPeer() {
+    auto weakImpl = std::weak_ptr<Impl>(impl_);
+    impl_->signaler->subscribe([weakImpl](const uint8_t* data, std::size_t size) {
+        if (auto state = weakImpl.lock()) state->onSignalMessage(data, size);
+    });
+    impl_->sendHello();
+}
+
 bool WebRtcConnection::connect(double timeoutSec) {
+    if (group_) {
+        group_->start();
+        std::unique_lock<std::mutex> lock(group_->mutex);
+        group_->cv.wait_for(lock, std::chrono::duration<double>(timeoutSec), [this]() {
+            if (group_->stopped) return true;
+            for (const auto& entry : group_->peers)
+                if (entry.second->isConnected()) return true;
+            return false;
+        });
+        for (const auto& entry : group_->peers)
+            if (entry.second->isConnected()) return true;
+        return false;
+    }
     impl_->disconnecting.store(false);
     impl_->connected.store(false);
     impl_->helloStop.store(false);
@@ -775,6 +1111,7 @@ bool WebRtcConnection::connect(double timeoutSec) {
 }
 
 void WebRtcConnection::disconnect() {
+    if (group_) { group_->stop(); return; }
     if (impl_->disconnecting.exchange(true)) return;  // already disconnecting
 
     impl_->connected.store(false);
@@ -810,23 +1147,55 @@ void WebRtcConnection::disconnect() {
 }
 
 bool WebRtcConnection::isConnected() const {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        for (const auto& entry : group_->peers)
+            if (entry.second->isConnected()) return true;
+        return false;
+    }
     return impl_->connected.load();
 }
 
 const std::string& WebRtcConnection::peerId() const {
+    if (group_) return group_->peerId;
     return impl_->peerId;
 }
 
 const std::string& WebRtcConnection::sessionId() const {
+    if (group_) return group_->sessionId;
     return impl_->sessionId;
 }
 
+std::vector<std::string> WebRtcConnection::peerIds() const {
+    std::vector<std::string> result;
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        for (const auto& entry : group_->peers)
+            if (entry.second->isConnected()) result.push_back(entry.first);
+    } else if (impl_->connected.load()) {
+        result.push_back(impl_->remotePeerId);
+    }
+    return result;
+}
+
 bool WebRtcConnection::useMediaChannels() const {
+    if (group_) return group_->options.useMediaChannels;
     return impl_->options.useMediaChannels;
 }
 
 WebRtcConnection::CallbackHandle
 WebRtcConnection::addPubCallback(const std::string& topic, DataCallback callback) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        const auto handle = group_->nextHandle.fetch_add(1);
+        group_->pubCallbacks[topic][handle] = callback;
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->pubMutex);
+            state->pubCallbacks[topic][handle] = callback;
+        }
+        return handle;
+    }
     std::lock_guard<std::mutex> lk(impl_->pubMutex);
     const auto handle = impl_->nextPubHandle.fetch_add(1);
     impl_->pubCallbacks[topic][handle] = std::move(callback);
@@ -834,6 +1203,18 @@ WebRtcConnection::addPubCallback(const std::string& topic, DataCallback callback
 }
 
 void WebRtcConnection::removePubCallback(const std::string& topic, CallbackHandle handle) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        auto found = group_->pubCallbacks.find(topic);
+        if (found != group_->pubCallbacks.end()) found->second.erase(handle);
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->pubMutex);
+            auto callbacks = state->pubCallbacks.find(topic);
+            if (callbacks != state->pubCallbacks.end()) callbacks->second.erase(handle);
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->pubMutex);
     auto it = impl_->pubCallbacks.find(topic);
     if (it != impl_->pubCallbacks.end()) {
@@ -844,6 +1225,32 @@ void WebRtcConnection::removePubCallback(const std::string& topic, CallbackHandl
 
 WebRtcConnection::CallbackHandle
 WebRtcConnection::addRpcRequestCallback(const std::string& service, RpcRequestCallback callback) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        const auto handle = group_->nextHandle.fetch_add(1);
+        group_->rpcReqCallbacks[service][handle] = callback;
+        auto weak = std::weak_ptr<Group>(group_);
+        for (auto& entry : group_->peers) {
+            const auto remote = entry.first;
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->rpcReqMutex);
+            state->rpcReqCallbacks[service][handle] =
+                [weak, remote, callback](const Value& message) {
+                    if (auto group = weak.lock()) {
+                        if (message.type() == Value::Type::Dict) {
+                            const auto& fields = message.asDict();
+                            auto rid = fields.find("rid");
+                            if (rid != fields.end() && rid->second.type() == Value::Type::String) {
+                                std::lock_guard<std::mutex> guard(group->mutex);
+                                group->rpcOrigins[rid->second.asString()] = remote;
+                            }
+                        }
+                    }
+                    callback(message);
+                };
+        }
+        return handle;
+    }
     std::lock_guard<std::mutex> lk(impl_->rpcReqMutex);
     const auto handle = impl_->nextRpcReqHandle.fetch_add(1);
     impl_->rpcReqCallbacks[service][handle] = std::move(callback);
@@ -851,6 +1258,18 @@ WebRtcConnection::addRpcRequestCallback(const std::string& service, RpcRequestCa
 }
 
 void WebRtcConnection::removeRpcRequestCallback(const std::string& service, CallbackHandle handle) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        auto found = group_->rpcReqCallbacks.find(service);
+        if (found != group_->rpcReqCallbacks.end()) found->second.erase(handle);
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->rpcReqMutex);
+            auto callbacks = state->rpcReqCallbacks.find(service);
+            if (callbacks != state->rpcReqCallbacks.end()) callbacks->second.erase(handle);
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->rpcReqMutex);
     auto it = impl_->rpcReqCallbacks.find(service);
     if (it != impl_->rpcReqCallbacks.end()) {
@@ -860,16 +1279,66 @@ void WebRtcConnection::removeRpcRequestCallback(const std::string& service, Call
 }
 
 void WebRtcConnection::addRpcReplyCallback(const std::string& rid, RpcReplyCallback callback) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        group_->rpcRepCallbacks[rid] = callback;
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->rpcRepMutex);
+            state->rpcRepCallbacks[rid] = callback;
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->rpcRepMutex);
     impl_->rpcRepCallbacks[rid] = std::move(callback);
 }
 
 void WebRtcConnection::removeRpcReplyCallback(const std::string& rid) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        group_->rpcRepCallbacks.erase(rid);
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->rpcRepMutex);
+            state->rpcRepCallbacks.erase(rid);
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->rpcRepMutex);
     impl_->rpcRepCallbacks.erase(rid);
 }
 
 void WebRtcConnection::sendData(const Value& msg) {
+    if (group_) {
+        std::vector<std::shared_ptr<WebRtcConnection>> targets;
+        {
+            std::lock_guard<std::mutex> lock(group_->mutex);
+            std::string kind;
+            std::string rid;
+            if (msg.type() == Value::Type::Dict) {
+                const auto& fields = msg.asDict();
+                auto type = fields.find("type");
+                auto request = fields.find("rid");
+                if (type != fields.end() && type->second.type() == Value::Type::String)
+                    kind = type->second.asString();
+                if (request != fields.end() && request->second.type() == Value::Type::String)
+                    rid = request->second.asString();
+            }
+            if (kind == "rpc_ack" || kind == "rpc_rep") {
+                auto origin = group_->rpcOrigins.find(rid);
+                if (origin != group_->rpcOrigins.end()) {
+                    auto peer = group_->peers.find(origin->second);
+                    if (peer != group_->peers.end()) targets.push_back(peer->second);
+                    if (kind == "rpc_rep") group_->rpcOrigins.erase(origin);
+                }
+            } else {
+                for (const auto& entry : group_->peers)
+                    if (entry.second->isConnected()) targets.push_back(entry.second);
+            }
+        }
+        for (auto& peer : targets) peer->sendData(msg);
+        return;
+    }
     if (!impl_->connected.load() || !impl_->dc) return;
     try {
         auto bytes = impl_->serializer->serialize(msg);
@@ -883,6 +1352,17 @@ void WebRtcConnection::sendData(const Value& msg) {
 
 WebRtcConnection::CallbackHandle
 WebRtcConnection::addVideoCallback(VideoCallback callback) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        const auto handle = group_->nextHandle.fetch_add(1);
+        group_->videoCallbacks[handle] = callback;
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->mediaMutex);
+            state->videoCallbacks[handle] = callback;
+        }
+        return handle;
+    }
     std::lock_guard<std::mutex> lk(impl_->mediaMutex);
     const auto handle = impl_->nextMediaHandle.fetch_add(1);
     impl_->videoCallbacks[handle] = std::move(callback);
@@ -890,12 +1370,33 @@ WebRtcConnection::addVideoCallback(VideoCallback callback) {
 }
 
 void WebRtcConnection::removeVideoCallback(CallbackHandle handle) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        group_->videoCallbacks.erase(handle);
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->mediaMutex);
+            state->videoCallbacks.erase(handle);
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->mediaMutex);
     impl_->videoCallbacks.erase(handle);
 }
 
 WebRtcConnection::CallbackHandle
 WebRtcConnection::addAudioCallback(AudioCallback callback) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        const auto handle = group_->nextHandle.fetch_add(1);
+        group_->audioCallbacks[handle] = callback;
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->mediaMutex);
+            state->audioCallbacks[handle] = callback;
+        }
+        return handle;
+    }
     std::lock_guard<std::mutex> lk(impl_->mediaMutex);
     const auto handle = impl_->nextMediaHandle.fetch_add(1);
     impl_->audioCallbacks[handle] = std::move(callback);
@@ -903,11 +1404,31 @@ WebRtcConnection::addAudioCallback(AudioCallback callback) {
 }
 
 void WebRtcConnection::removeAudioCallback(CallbackHandle handle) {
+    if (group_) {
+        std::lock_guard<std::mutex> lock(group_->mutex);
+        group_->audioCallbacks.erase(handle);
+        for (auto& entry : group_->peers) {
+            auto state = entry.second->impl_;
+            std::lock_guard<std::mutex> childLock(state->mediaMutex);
+            state->audioCallbacks.erase(handle);
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lk(impl_->mediaMutex);
     impl_->audioCallbacks.erase(handle);
 }
 
 void WebRtcConnection::sendMediaFrame(const Value& msg) {
+    if (group_) {
+        std::vector<std::shared_ptr<WebRtcConnection>> targets;
+        {
+            std::lock_guard<std::mutex> lock(group_->mutex);
+            for (const auto& entry : group_->peers)
+                if (entry.second->isConnected()) targets.push_back(entry.second);
+        }
+        for (auto& peer : targets) peer->sendMediaFrame(msg);
+        return;
+    }
     if (!impl_->connected.load() || !impl_->mediaDc) return;
     try {
         auto bytes = impl_->serializer->serialize(msg);

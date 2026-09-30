@@ -3,9 +3,11 @@
 #include <magpie/transport/webrtc_signaler.hpp>
 
 #include <functional>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace magpie {
 
@@ -30,6 +32,9 @@ public:
     ~HttpSignaler() override;
 
     const std::string& sessionId() const noexcept override;
+    /// Register an opaque hello in the PUT body; true when the relay caches it.
+    bool announce(const std::vector<std::uint8_t>& payload);
+    bool supportsJoinAnnouncements() const noexcept;
     void publish(const std::uint8_t* data, std::size_t size) override;
     void subscribe(MessageCallback callback) override;
     void unsubscribe() override;

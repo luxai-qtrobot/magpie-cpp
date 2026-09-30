@@ -12,10 +12,11 @@
 
 namespace magpie {
 
-/** Two-peer ZeroMQ PAIR signaler compatible with Python's ZmqSignaler. */
+/** ZeroMQ signaling: legacy PAIR or multi-client ROUTER/DEALER mode. */
 class ZmqSignaler final : public WebRtcSignaler {
 public:
-    ZmqSignaler(std::string endpoint, std::string sessionId, bool bind = false);
+    ZmqSignaler(std::string endpoint, std::string sessionId,
+                bool bind = false, bool multiplex = false);
     ~ZmqSignaler() override;
 
     const std::string& sessionId() const noexcept override { return sessionId_; }
@@ -30,6 +31,7 @@ private:
     std::string endpoint_;
     std::string sessionId_;
     bool bind_;
+    bool multiplex_;
     std::atomic<bool> stopped_{false};
     std::mutex mutex_;
     MessageCallback callback_;

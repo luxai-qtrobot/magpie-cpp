@@ -44,6 +44,10 @@ struct WebRtcOptions {
     /// Automatically re-establish the peer connection when it drops.
     bool reconnect{false};
 
+    /// Signaling topology: "mesh" (default), "host", or "client".
+    /// Hosts accept clients; clients do not connect to other clients.
+    std::string role{"mesh"};
+
     /**
      * Use the "magpie-media" unreliable data channel for video/audio frames
      * (default: true).
